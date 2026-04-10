@@ -1,8 +1,6 @@
-# xiaomiao_refactor
+# QQ猫娘🐱
 
-基于 `NoneBot2 + OneBot V11 + MySQL` 的小喵机器人重构版。
-
-这个版本的目标不是只“能跑”，而是把原项目里聊天、记忆、工具、配置管理、后台管理这些能力整理成更清晰的结构，同时去掉 Redis，统一走 MySQL。
+基于 `NoneBot2 + OneBot V11 + MySQL` 的小喵机器人。
 
 ## 特性
 
@@ -178,12 +176,14 @@ pnpm build
 当前支持两类工具：
 
 1. 内置工具
+
 - `get_current_time`
 - `web_search`
 - `web_fetch`
 - `get_weather`
 
 2. 数据库 HTTP 工具
+
 - 后台新增
 - 单工具启停
 - 编辑请求方法 / URL / Headers / Body 模板 / 参数 Schema
