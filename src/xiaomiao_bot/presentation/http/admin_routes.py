@@ -469,7 +469,7 @@ async def list_group_configs(
     request: Request,
     x_admin_token: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     keyword: str = Query(default=""),
 ) -> dict[str, Any]:
     _get_current_admin(request, x_admin_token)
@@ -500,7 +500,7 @@ async def list_private_configs(
     request: Request,
     x_admin_token: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     keyword: str = Query(default=""),
 ) -> dict[str, Any]:
     _get_current_admin(request, x_admin_token)
@@ -531,7 +531,7 @@ async def list_group_messages(
     request: Request,
     x_admin_token: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     session_id: int | None = Query(default=None),
     sender_user_id: int | None = Query(default=None),
     role: str = Query(default=""),
@@ -612,6 +612,20 @@ async def delete_group_messages(
     )
 
 
+@router.post("/messages/group/{session_id}/clear")
+async def clear_group_messages(
+    session_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.clear_session_messages(
+        session_type="group",
+        session_id=session_id,
+        changed_by=_changed_by(admin),
+    )
+
+
 @router.get("/message-sessions/group")
 async def list_group_message_sessions(
     request: Request,
@@ -632,7 +646,7 @@ async def list_private_messages(
     request: Request,
     x_admin_token: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     session_id: int | None = Query(default=None),
     sender_user_id: int | None = Query(default=None),
     role: str = Query(default=""),
@@ -713,6 +727,20 @@ async def delete_private_messages(
     )
 
 
+@router.post("/messages/private/{session_id}/clear")
+async def clear_private_messages(
+    session_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.clear_session_messages(
+        session_type="private",
+        session_id=session_id,
+        changed_by=_changed_by(admin),
+    )
+
+
 @router.get("/message-sessions/private")
 async def list_private_message_sessions(
     request: Request,
@@ -733,7 +761,7 @@ async def list_group_summaries(
     request: Request,
     x_admin_token: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     session_id: int | None = Query(default=None),
     is_active: bool | None = Query(default=None),
 ) -> dict[str, Any]:
@@ -752,7 +780,7 @@ async def list_private_summaries(
     request: Request,
     x_admin_token: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     session_id: int | None = Query(default=None),
     is_active: bool | None = Query(default=None),
 ) -> dict[str, Any]:
@@ -771,7 +799,7 @@ async def list_ai_call_logs(
     request: Request,
     x_admin_token: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     session_type: str = Query(default=""),
     session_id: int | None = Query(default=None),
     stage: str = Query(default=""),

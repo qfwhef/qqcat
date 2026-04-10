@@ -493,7 +493,7 @@ class SessionStore:
     ) -> dict[str, Any]:
         table_name = self.get_message_table_name(session_type, session_id)
         safe_page = max(1, page)
-        safe_page_size = max(1, min(page_size, 100))
+        safe_page_size = max(1, min(page_size, 200))
         if not table_name:
             return {"items": [], "page": safe_page, "page_size": safe_page_size, "total": 0}
         filters: list[str] = []
@@ -685,6 +685,30 @@ class SessionStore:
             self._sync_message_registry(scope)
             self._refresh_or_clear_last_message_state(scope)
         return int(affected)
+
+    def clear_session_for_admin(
+        self,
+        *,
+        session_type: str,
+        session_id: int,
+    ) -> int:
+        scope = SessionScope(session_type=session_type, session_id=int(session_id))
+        table_name = self.get_message_table_name(session_type, session_id)
+        summary_table, summary_key = self._summary_table(scope)
+        state_table, state_key = self._state_table(scope)
+        deleted_count = 0
+        if table_name:
+            row = database.fetch_one(
+                f"SELECT COUNT(*) AS total FROM {self._quoted_table_name(table_name)}",
+                (),
+            )
+            deleted_count = int(row["total"] or 0) if row else 0
+            database.execute(f"DELETE FROM {self._quoted_table_name(table_name)}", ())
+            self._sync_message_registry(scope)
+        database.execute(f"DELETE FROM {summary_table} WHERE {summary_key}=%s", (scope.session_id,))
+        database.execute(f"DELETE FROM {state_table} WHERE {state_key}=%s", (scope.session_id,))
+        self._refresh_or_clear_last_message_state(scope)
+        return deleted_count
 
     @staticmethod
     def _summary_table(scope: SessionScope) -> tuple[str, str]:

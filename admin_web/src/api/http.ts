@@ -10,7 +10,12 @@ const http = axios.create({
 http.interceptors.response.use(
   (response) => response,
   (error) => {
-    const message = error?.response?.data?.detail || error?.message || '请求失败'
+    const detail = error?.response?.data?.detail
+    const message = Array.isArray(detail)
+      ? detail
+          .map((item) => item?.msg || item?.message || JSON.stringify(item))
+          .join('；')
+      : detail || error?.message || '请求失败'
     if (error?.response?.status !== 401) {
       ElMessage.error(String(message))
     }

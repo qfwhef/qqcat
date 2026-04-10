@@ -521,7 +521,7 @@ class AdminService:
         is_tool: bool | None = None,
     ) -> dict[str, Any]:
         if session_id is None:
-            return {"items": [], "page": max(1, page), "page_size": max(1, min(page_size, 100)), "total": 0}
+            return {"items": [], "page": max(1, page), "page_size": max(1, min(page_size, 200)), "total": 0}
         return session_store.list_messages_for_admin(
             session_type=session_type,
             session_id=session_id,
@@ -626,6 +626,31 @@ class AdminService:
             "message_ids": message_ids,
         }
 
+    def clear_session_messages(
+        self,
+        *,
+        session_type: str,
+        session_id: int,
+        changed_by: str,
+    ) -> dict[str, Any]:
+        deleted = session_store.clear_session_for_admin(
+            session_type=session_type,
+            session_id=session_id,
+        )
+        self._log_config_change(
+            config_domain="message_delete",
+            scope_ref=f"{session_type}:{session_id}",
+            change_type="delete",
+            before_json={"mode": "clear_session"},
+            after_json={"deleted_count": deleted, "session_type": session_type, "session_id": session_id},
+            changed_by=changed_by,
+        )
+        return {
+            "deleted_count": deleted,
+            "session_type": session_type,
+            "session_id": session_id,
+        }
+
     def list_summaries(
         self,
         *,
@@ -728,7 +753,7 @@ class AdminService:
         columns: str,
     ) -> dict[str, Any]:
         safe_page = max(1, page)
-        safe_page_size = max(1, min(page_size, 100))
+        safe_page_size = max(1, min(page_size, 200))
         where_sql = f" WHERE {' AND '.join(filters)}" if filters else ""
         count_row = database.fetch_one(
             f"SELECT COUNT(*) AS total {table_sql}{where_sql}",

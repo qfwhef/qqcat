@@ -18,7 +18,14 @@
             </div>
           </div>
           <div style="display: flex; gap: 10px">
-            <el-button @click="clearSelectedSession">返回会话类型</el-button>
+            <el-button
+              type="danger"
+              plain
+              :disabled="!selectedSession"
+              @click="handleClearSession"
+            >
+              全部删除
+            </el-button>
             <el-button
               type="danger"
               :disabled="!selectedRows.length"
@@ -108,12 +115,13 @@
         </el-form>
 
         <div class="table-scroll-shell">
-          <el-table
-            :data="rows.items"
-            :max-height="tableMaxHeight"
-            @row-click="openDetail"
-            @selection-change="handleSelectionChange"
-          >
+            <el-table
+              ref="tableRef"
+              class="messages-table"
+              :data="rows.items"
+              height="100%"
+              @selection-change="handleSelectionChange"
+            >
             <el-table-column type="selection" width="48" />
             <el-table-column label="发送者昵称" min-width="160">
               <template #default="{ row }">{{
@@ -138,6 +146,9 @@
             <el-table-column label="操作" width="160" fixed="right">
               <template #default="{ row }">
                 <div style="display: flex; gap: 8px">
+                  <el-button link type="info" @click.stop="openDetail(row)"
+                    >查看</el-button
+                  >
                   <el-button link type="primary" @click.stop="openEdit(row)"
                     >编辑</el-button
                   >
@@ -295,6 +306,7 @@ const messagesContentRef = ref<HTMLElement | null>(null);
 const toolbarRef = ref<HTMLElement | null>(null);
 const filterFormRef = ref<any>(null);
 const paginationBarRef = ref<HTMLElement | null>(null);
+const tableRef = ref<any>(null);
 const tableMaxHeightPx = ref(360);
 let resizeObserver: ResizeObserver | null = null;
 const rows = reactive({ items: [] as any[], page: 1, page_size: 20, total: 0 });
@@ -360,6 +372,9 @@ const recalcTableHeight = async () => {
   const available = viewport - top - 24;
   tableMaxHeightPx.value =
     available - toolbarHeight - formHeight - paginationHeight - 18;
+  // 高度变化后强制表格重算布局，确保横向滚动条正确显示
+  await nextTick();
+  tableRef.value?.doLayout();
 };
 
 const applyTimePreset = async () => {
@@ -411,6 +426,9 @@ const loadMessages = async () => {
         : await adminApi.getPrivateMessages(params);
     Object.assign(rows, data);
     selectedRows.value = [];
+    // 数据加载后强制重新计算表格布局，恢复横向滚动条
+    await nextTick();
+    tableRef.value?.doLayout();
   } finally {
     loading.value = false;
   }
@@ -555,6 +573,25 @@ const handleBatchDelete = async () => {
   await performDelete(selectedRows.value.map((item) => Number(item.id)));
 };
 
+const handleClearSession = async () => {
+  if (!filters.session_id || !selectedSession.value) return;
+  await ElMessageBox.confirm(
+    `确认删除当前会话 ${selectedSession.value.display_name} 的全部消息吗？这会同时清空该会话摘要。`,
+    "全部删除当前会话",
+    {
+      type: "warning",
+    },
+  );
+  if (activeTab.value === "group") {
+    await adminApi.clearGroupMessages(Number(filters.session_id));
+  } else {
+    await adminApi.clearPrivateMessages(Number(filters.session_id));
+  }
+  ElMessage.success("当前会话已全部删除");
+  await loadSessionMenus();
+  await loadMessages();
+};
+
 const applyRouteTab = async () => {
   const nextTab: "group" | "private" = route.path.includes("/messages/private")
     ? "private"
@@ -631,13 +668,24 @@ onBeforeUnmount(() => {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   padding-bottom: 14px;
 }
 
 .table-scroll-shell {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   margin-top: 8px;
+}
+
+.messages-table :deep(.el-scrollbar__wrap) {
+  overflow-x: auto !important;
+}
+
+.messages-table :deep(.el-scrollbar__bar.is-horizontal) {
+  display: block !important;
+  height: 6px;
 }
 
 .pagination-bar {
@@ -646,8 +694,8 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   min-height: 32px;
   margin-top: 6px;
-  margin-bottom: 0;
-  padding-bottom: 0;
+  margin-bottom: 12px;
+  padding-bottom: 4px;
   background: #fff;
 }
 
@@ -660,12 +708,15 @@ onBeforeUnmount(() => {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding-bottom: 2px !important;
-  overflow: hidden;
+  padding-bottom: 12px !important;
+  overflow: visible;
 }
 
 :deep(.messages-page-root > .page-card) {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 </style>
