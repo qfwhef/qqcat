@@ -357,6 +357,8 @@ onBeforeUnmount(() => {
 
 .main-shell {
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: 14px 16px 4px !important;
+  display: flex;
+  flex-direction: column;
 }
 </style>

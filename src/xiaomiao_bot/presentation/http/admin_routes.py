@@ -54,6 +54,7 @@ class RuntimeConfigPayload(BaseModel):
     summary_keep_recent_messages: int | None = Field(default=None, ge=1, le=500)
     summary_cooldown_seconds: int | None = Field(default=None, ge=0, le=86400)
     summary_min_new_messages: int | None = Field(default=None, ge=1, le=500)
+    minecraft_notify_groups: list[int] | None = None
     max_history: int | None = Field(default=None, ge=1, le=500)
     log_level: str | None = None
 

@@ -27,6 +27,14 @@
             <el-form-item label="最大历史条数">
               <el-input-number v-model="form.max_history" :min="1" :max="500" />
             </el-form-item>
+            <el-form-item label="Minecraft 通知群白名单">
+              <el-input
+                v-model="minecraftNotifyGroupsRaw"
+                type="textarea"
+                :rows="4"
+                placeholder="每行一个群号，也支持逗号分隔"
+              />
+            </el-form-item>
             <el-form-item label="摘要触发条数">
               <el-input-number v-model="form.summary_trigger_rounds" :min="1" :max="2000" />
             </el-form-item>
@@ -90,6 +98,7 @@ const loading = ref(false)
 const saving = ref(false)
 const textFallbackRaw = ref('')
 const visionFallbackRaw = ref('')
+const minecraftNotifyGroupsRaw = ref('')
 const form = reactive({
   ai_base_url: '',
   text_model: '',
@@ -129,6 +138,9 @@ const loadData = async () => {
     form.summary_min_new_messages = Number(data.summary_min_new_messages ?? 12)
     form.max_history = Number(data.max_history ?? 100)
     form.log_level = data.log_level ?? 'INFO'
+    minecraftNotifyGroupsRaw.value = Array.isArray(data.minecraft_notify_groups)
+      ? data.minecraft_notify_groups.join('\n')
+      : ''
     textFallbackRaw.value = Array.isArray(data.text_model_fallback) ? data.text_model_fallback.join('\n') : ''
     visionFallbackRaw.value = Array.isArray(data.vision_model_fallback)
       ? data.vision_model_fallback.join('\n')
@@ -143,6 +155,7 @@ const save = async () => {
   try {
     await adminApi.updateRuntimeConfig({
       ...form,
+      minecraft_notify_groups: parseLines(minecraftNotifyGroupsRaw.value).map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0),
       text_model_fallback: parseLines(textFallbackRaw.value),
       vision_model_fallback: parseLines(visionFallbackRaw.value),
     })

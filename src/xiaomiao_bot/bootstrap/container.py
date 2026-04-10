@@ -70,6 +70,7 @@ def get_container() -> AppContainer:
         runtime_config_store=runtime_config_store,
         secret_service=secret_service,
         admin_auth_service=admin_auth_service,
+        minecraft_service=minecraft_service,
     )
 
     _container = AppContainer(

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..application.admin_auth_service import AdminAuthService
+from ..application.minecraft_service import MinecraftService
 from ..application.prompt_defaults import (
     DEFAULT_PROMPT_BASE,
     DEFAULT_PROMPT_LOGIC_AT_ME,
@@ -42,10 +43,12 @@ class AdminService:
         runtime_config_store: RuntimeConfigStore,
         secret_service: SecretService,
         admin_auth_service: AdminAuthService,
+        minecraft_service: MinecraftService,
     ) -> None:
         self.runtime_config_store = runtime_config_store
         self.secret_service = secret_service
         self.admin_auth_service = admin_auth_service
+        self.minecraft_service = minecraft_service
 
     def get_overview(self) -> dict[str, Any]:
         since = datetime.now() - timedelta(hours=24)
@@ -97,11 +100,20 @@ class AdminService:
         }
 
     def get_runtime_config(self) -> dict[str, Any]:
-        return self.runtime_config_store.get_runtime_snapshot()
+        return {
+            **self.runtime_config_store.get_runtime_snapshot(),
+            **self.minecraft_service.get_runtime_config(),
+        }
 
     def update_runtime_config(self, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
         before = self.get_runtime_config()
-        self.runtime_config_store.update_runtime_settings(payload)
+        runtime_payload = dict(payload)
+        minecraft_notify_groups = runtime_payload.pop("minecraft_notify_groups", None)
+        self.runtime_config_store.update_runtime_settings(runtime_payload)
+        if minecraft_notify_groups is not None:
+            self.minecraft_service.update_runtime_config(
+                minecraft_notify_groups=[int(item) for item in minecraft_notify_groups],
+            )
         after = self.get_runtime_config()
         self._log_config_change(
             config_domain="ai_runtime",
