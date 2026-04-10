@@ -1,0 +1,2 @@
+"""NoneBot local plugins."""
+

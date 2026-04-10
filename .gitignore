@@ -1,0 +1,43 @@
+# Secrets and local env
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Frontend
+admin_web/node_modules/
+admin_web/dist/
+admin_web/.vite/
+admin_web/.cache/
+*.tsbuildinfo
+
+# Local data / backups
+db_backups/
+data/
+uploads/
+*.db
+*.db-shm
+*.db-wal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Temp / logs
+*.log
+*.tmp
+*.temp
+
+# Exclude reference source bundle
+LittleMeowBot-main/

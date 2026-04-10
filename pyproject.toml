@@ -1,0 +1,37 @@
+[project]
+name = "xiaomiao-refactor"
+version = "0.1.0"
+description = "Refactored xiaomiao bot with MySQL-only persistence"
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "nonebot2[fastapi]>=2.4.4",
+    "nonebot2[httpx]>=2.4.4",
+    "nonebot-adapter-onebot>=2.4.6",
+    "openai>=1.30.0",
+    "pymysql>=1.1.1",
+    "redis>=5.0.0",
+    "itsdangerous>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.0",
+]
+
+[tool.nonebot]
+plugin_dirs = ["src/plugins"]
+builtin_plugins = []
+
+[tool.nonebot.adapters]
+nonebot-adapter-onebot = [
+    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
+]
+"@local" = []
+
+[tool.nonebot.plugins]
+"@local" = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -1,0 +1,172 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.4;
+  font-weight: 400;
+  color: #1f2937;
+  background: #eef3f8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-width: 1080px;
+  font-size: 13px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.page-card {
+  border-radius: 12px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.page-subtitle {
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.mono {
+  font-family: Consolas, "SFMono-Regular", monospace;
+}
+
+.json-block {
+  margin: 0;
+  padding: 10px;
+  max-height: 420px;
+  overflow: auto;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #dbeafe;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.toolbar-form .el-form-item {
+  margin-bottom: 8px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.stat-card {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #ffffff 0%, #f6f8fc 100%);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.stat-label {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.stat-value {
+  margin-top: 6px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.el-card__header {
+  padding: 12px 14px !important;
+}
+
+.el-card__body {
+  padding: 14px !important;
+}
+
+.el-table {
+  font-size: 12px;
+}
+
+.el-table .cell {
+  line-height: 1.35;
+}
+
+.el-table th.el-table__cell,
+.el-table td.el-table__cell {
+  padding: 7px 0 !important;
+}
+
+.el-form-item__label {
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  font-size: 12px !important;
+}
+
+.el-button {
+  font-size: 12px;
+}
+
+.el-pagination {
+  font-size: 12px;
+}
+
+.el-tabs__header {
+  margin-bottom: 10px !important;
+}
+
+.el-tabs__item {
+  font-size: 13px !important;
+}
+
+.el-descriptions__label,
+.el-descriptions__content {
+  font-size: 12px !important;
+}
