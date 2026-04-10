@@ -49,12 +49,33 @@ xiaomiao_refactor/
 └── README.md
 ```
 
+## 部署方式
+
+当前线上实际部署方式是：
+
+- NapCat 通过 Docker 运行
+- NapCat 提供 OneBot WebSocket
+- 机器人通过 `NoneBot2 + OneBot V11 Adapter` 连接 NapCat
+- 机器人本体在项目目录里通过 Python 虚拟环境运行
+- 使用 `screen` 挂后台
+
+链路是：
+
+```text
+NapCat(Docker) -> OneBot WebSocket -> NoneBot -> 管理后台 / 机器人逻辑
+```
+
+默认端口关系：
+
+- NapCat OneBot WebSocket：`ws://127.0.0.1:3001/onebot/v11/ws`
+- NoneBot / 管理后台：`http://0.0.0.0:8080`
+
 ## 环境准备
 
 ### 1. 创建虚拟环境并安装依赖
 
 ```bash
-cd /root/mybot/qqcat
+cd /root/mybot/xiaomiao_v2
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -64,7 +85,7 @@ pip install nb-cli
 
 ### 2. 初始化数据库
 
-先执行 [schema.sql](C:/Users/84334/Desktop/fsdownload/src/qqcat/sql/schema.sql)。
+先执行 [schema.sql](sql/schema.sql)。
 
 确认 `bot_ai_runtime_config` 里已经包含这些摘要配置列：
 
@@ -113,10 +134,30 @@ cp .env.example .env.prod
 
 ## 启动机器人
 
+### 1. 确保 NapCat 已启动
+
+如果你和当前线上一样使用 Docker 部署 NapCat，先确认容器在运行：
+
 ```bash
-cd /root/mybot/xiaomiao_refactor
+docker ps
+```
+
+你至少应该能看到类似：
+
+```text
+napcat    mlikiowa/napcat-docker:latest
+```
+
+然后确认 OneBot WebSocket 监听正常：
+
+```bash
+ss -ltnp | grep 3001
+```
+
+```bash
+cd /root/mybot/xiaomiao_v2
 source .venv/bin/activate
-export PYTHONPATH=/root/mybot/xiaomiao_refactor/src
+export PYTHONPATH=/root/mybot/xiaomiao_v2/src
 nb run
 ```
 
@@ -129,7 +170,7 @@ python -m nonebot
 ## 使用 Screen 后台运行
 
 ```bash
-screen -dmS xiaomiao bash -lc 'cd /root/mybot/xiaomiao_refactor && source .venv/bin/activate && export PYTHONPATH=/root/mybot/xiaomiao_refactor/src && nb run'
+screen -dmS mcbot bash -lc 'cd /root/mybot/xiaomiao_v2 && source .venv/bin/activate && export PYTHONPATH=/root/mybot/xiaomiao_v2/src && nb run'
 ```
 
 查看：
@@ -141,13 +182,19 @@ screen -ls
 进入：
 
 ```bash
-screen -r xiaomiao
+screen -r mcbot
+```
+
+如果你想查看当前后台会话：
+
+```bash
+screen -ls
 ```
 
 ## 构建管理后台
 
 ```bash
-cd /root/mybot/xiaomiao_refactor/admin_web
+cd /root/mybot/xiaomiao_v2/admin_web
 pnpm install
 pnpm build
 ```
@@ -226,6 +273,7 @@ pnpm build
 
 ## 注意事项
 
+- 如果你使用 Docker 部署 NapCat，README 里的机器人启动命令只负责 `NoneBot`，不会替你启动 NapCat 容器
 - `ONEBOT_WS_URLS` 必须是 JSON 数组，不能写成普通字符串
 - 机器人使用动态消息分表：
   - 群聊：`bot_group_message_<group_id>`
