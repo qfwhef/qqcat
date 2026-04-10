@@ -5,7 +5,6 @@
 ## 特性
 
 - QQ 群聊 / 私聊 AI 对话
-- `/sleep` `/wakeup` `/rate` `/srate` `/clean` 命令
 - MySQL 直存，不依赖 Redis
 - 会话摘要压缩与长期记忆
 - 图片消息识别与引用图片补充描述
@@ -55,7 +54,7 @@ xiaomiao_refactor/
 ### 1. 创建虚拟环境并安装依赖
 
 ```bash
-cd /root/mybot/xiaomiao_refactor
+cd /root/mybot/qqcat
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -65,9 +64,9 @@ pip install nb-cli
 
 ### 2. 初始化数据库
 
-先执行 [schema.sql](C:/Users/84334/Desktop/fsdownload/src/xiaomiao_refactor/sql/schema.sql)。
+先执行 [schema.sql](C:/Users/84334/Desktop/fsdownload/src/qqcat/sql/schema.sql)。
 
-如果你已经在旧版本基础上升级，除了完整建表外，还要确认 `bot_ai_runtime_config` 里已经包含这些摘要配置列：
+确认 `bot_ai_runtime_config` 里已经包含这些摘要配置列：
 
 - `summary_trigger_rounds`
 - `summary_keep_recent_messages`
@@ -87,7 +86,7 @@ cp .env.example .env.prod
 
 ## 配置说明
 
-示例文件见 [`.env.example`](C:/Users/84334/Desktop/fsdownload/src/xiaomiao_refactor/.env.example)。
+示例文件见 [`.env.example`](.env.example)。
 
 重点字段：
 
@@ -219,15 +218,14 @@ pnpm build
 
 ### Redis -> MySQL
 
-[sync_redis_to_mysql.py](C:/Users/84334/Desktop/fsdownload/src/xiaomiao_refactor/scripts/sync_redis_to_mysql.py)
+[sync_redis_to_mysql.py](scripts/sync_redis_to_mysql.py)
 
 ### 共享消息表 -> 动态分表
 
-[migrate_shared_messages_to_partitioned_tables.py](C:/Users/84334/Desktop/fsdownload/src/xiaomiao_refactor/scripts/migrate_shared_messages_to_partitioned_tables.py)
+[migrate_shared_messages_to_partitioned_tables.py](scripts/migrate_shared_messages_to_partitioned_tables.py)
 
 ## 注意事项
 
-- `.env` / `.env.prod` 不要提交到 Git
 - `ONEBOT_WS_URLS` 必须是 JSON 数组，不能写成普通字符串
 - 机器人使用动态消息分表：
   - 群聊：`bot_group_message_<group_id>`
@@ -236,14 +234,3 @@ pnpm build
   - `DRIVER` 是否包含 `~websockets`
   - `PYTHONPATH` 是否指向 `src`
   - MySQL 表结构是否与当前代码一致
-
-## Git
-
-当前仓库建议忽略：
-
-- `.env`
-- `.env.prod`
-- `admin_web/dist`
-- `node_modules`
-- `LittleMeowBot-main`
-- 本地数据库 / 备份文件 / 缓存
