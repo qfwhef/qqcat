@@ -41,5 +41,4 @@ Thumbs.db
 
 # Exclude reference source bundle
 LittleMeowBot-main/
-
-.gitignore
+scripts/
