@@ -55,7 +55,7 @@
           <el-table :data="privateConfigs.items">
             <el-table-column prop="user_id" label="用户 QQ" min-width="120" />
             <el-table-column prop="user_nickname" label="昵称" min-width="140" />
-            <el-table-column prop="reply_rate" label="回复率" width="100" />
+            <el-table-column prop="reply_rate" label="回复率(不生效)" width="100" />
             <el-table-column label="睡眠" width="90">
               <template #default="{ row }">{{ row.is_sleeping ? '是' : '否' }}</template>
             </el-table-column>

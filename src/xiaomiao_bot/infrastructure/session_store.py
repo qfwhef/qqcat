@@ -106,6 +106,7 @@ class SessionStore:
 
     def append_user_message(self, event: Event, content: str, *, is_at_bot: bool) -> int:
         scope = self.get_scope(event)
+        self._ensure_session_config(scope, event)
         row = self._build_user_message_row(event, scope, content, is_at_bot=is_at_bot)
         row_id = self._insert_message_row(scope, row, display_name=self._scope_display_name(scope, event))
         logger.info("写入用户消息: session=%s:%s row_id=%s", scope.session_type, scope.session_id, row_id)
@@ -743,6 +744,10 @@ class SessionStore:
             "DELETE FROM bot_ai_call_log WHERE session_type=%s AND session_id=%s",
             (session_type, int(session_id)),
         )
+        if session_type == "group":
+            database.execute("DELETE FROM bot_group_config WHERE group_id=%s", (scope.session_id,))
+        else:
+            database.execute("DELETE FROM bot_private_config WHERE user_id=%s", (scope.session_id,))
         database.execute(f"DELETE FROM {summary_table} WHERE {summary_key}=%s", (scope.session_id,))
         database.execute(f"DELETE FROM {state_table} WHERE {state_key}=%s", (scope.session_id,))
         return {
@@ -764,6 +769,37 @@ class SessionStore:
         if scope.session_type == "group":
             return "bot_group_session_state", "group_id"
         return "bot_private_session_state", "user_id"
+
+    def _ensure_session_config(self, scope: SessionScope, event: Event) -> None:
+        default_reply_rate = runtime_config_store.get_int("default_reply_rate", settings.default_reply_rate)
+        if scope.session_type == "group":
+            database.execute(
+                """
+                INSERT INTO bot_group_config(group_id, group_name, reply_rate, is_sleeping, enable_ai, enable_summary)
+                VALUES(%s, %s, %s, 0, 1, 1)
+                ON DUPLICATE KEY UPDATE
+                    group_name=COALESCE(NULLIF(VALUES(group_name), ''), group_name)
+                """,
+                (
+                    scope.session_id,
+                    self._get_group_name(event),
+                    int(default_reply_rate),
+                ),
+            )
+            return
+        database.execute(
+            """
+            INSERT INTO bot_private_config(user_id, user_nickname, reply_rate, is_sleeping, enable_ai, enable_summary)
+            VALUES(%s, %s, %s, 0, 1, 1)
+            ON DUPLICATE KEY UPDATE
+                user_nickname=COALESCE(NULLIF(VALUES(user_nickname), ''), user_nickname)
+            """,
+            (
+                scope.session_id,
+                self._get_user_nickname(event),
+                int(default_reply_rate),
+            ),
+        )
 
     def _get_config_row(self, scope: SessionScope) -> dict[str, Any] | None:
         if scope.session_type == "group":
