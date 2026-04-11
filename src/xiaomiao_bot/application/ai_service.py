@@ -616,6 +616,7 @@ class AIService:
             f"【长期记忆摘要】\n{self.format_summary_memory(summary)}\n\n"
             f"【会话场景】\n{logic_prompt}\n\n"
             f"【你的性格】\n{base_prompt}\n\n"
+            "【工具使用规则】\n仅可使用下方列出的当前可用工具；如果工具列表发生变化，以当前列表为准；不要调用未列出的工具。\n\n"
             f"【你能干什么】\n{self.format_tool_list()}\n\n"
             f"【此次用户消息】\n{context_msg}"
         )
