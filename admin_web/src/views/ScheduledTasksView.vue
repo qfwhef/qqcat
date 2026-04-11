@@ -1,14 +1,13 @@
 <template>
   <div>
-    <div class="page-header">
-      <div class="page-title">定时任务</div>
-      <div style="display: flex; gap: 10px">
-        <el-button :loading="loading" @click="loadData">刷新</el-button>
-        <el-button type="primary" @click="openCreateDialog">新增任务</el-button>
-      </div>
-    </div>
-
     <el-card class="page-card">
+      <div class="table-toolbar" style="margin-bottom: 8px">
+        <div style="font-size: 16px; font-weight: 700; color: #111827">定时任务</div>
+        <div style="display: flex; gap: 10px">
+          <el-button :loading="loading" @click="loadData">刷新</el-button>
+          <el-button type="primary" @click="openCreateDialog">新增任务</el-button>
+        </div>
+      </div>
       <el-form :inline="true" class="toolbar-form compact-filter-form">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" placeholder="名称/描述/消息内容" clearable style="width: 220px" />

@@ -139,8 +139,26 @@ export const adminApi = {
   getGroupSummaries(params: Record<string, unknown>) {
     return http.get<PagedResult>('/summaries/group', { params: cleanParams(params) }).then((res) => res.data)
   },
+  createGroupSummary(payload: Record<string, unknown>) {
+    return http.post('/summaries/group', payload).then((res) => res.data)
+  },
+  updateGroupSummary(summaryId: number, payload: Record<string, unknown>) {
+    return http.put(`/summaries/group/${summaryId}`, payload).then((res) => res.data)
+  },
+  deleteGroupSummary(summaryId: number) {
+    return http.delete(`/summaries/group/${summaryId}`).then((res) => res.data)
+  },
   getPrivateSummaries(params: Record<string, unknown>) {
     return http.get<PagedResult>('/summaries/private', { params: cleanParams(params) }).then((res) => res.data)
+  },
+  createPrivateSummary(payload: Record<string, unknown>) {
+    return http.post('/summaries/private', payload).then((res) => res.data)
+  },
+  updatePrivateSummary(summaryId: number, payload: Record<string, unknown>) {
+    return http.put(`/summaries/private/${summaryId}`, payload).then((res) => res.data)
+  },
+  deletePrivateSummary(summaryId: number) {
+    return http.delete(`/summaries/private/${summaryId}`).then((res) => res.data)
   },
   getAiCallLogs(params: Record<string, unknown>) {
     return http.get<PagedResult>('/ai-call-logs', { params: cleanParams(params) }).then((res) => res.data)

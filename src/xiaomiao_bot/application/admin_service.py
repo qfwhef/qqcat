@@ -733,6 +733,160 @@ class AdminService:
             "session_id": session_id,
         }
 
+    def create_summary(self, *, session_type: str, payload: dict[str, Any], changed_by: str) -> dict[str, Any]:
+        meta = self._summary_meta(session_type)
+        session_id = int(payload.get("session_id") or 0)
+        if session_id <= 0:
+            raise ValueError("session_id 不能为空")
+        summary_text = str(payload.get("summary_text") or "").strip()
+        if not summary_text:
+            raise ValueError("summary_text 不能为空")
+        version_row = database.fetch_one(
+            f"SELECT MAX(summary_version) AS max_version FROM {meta['summary_table']} WHERE {meta['summary_key']}=%s",
+            (session_id,),
+        )
+        next_version = int(version_row["max_version"] or 0) + 1 if version_row else 1
+        is_active = bool(payload.get("is_active", True))
+        if is_active:
+            database.execute(
+                f"UPDATE {meta['summary_table']} SET is_active=0 WHERE {meta['summary_key']}=%s",
+                (session_id,),
+            )
+        database.execute(
+            f"""
+            INSERT INTO {meta['summary_table']}(
+                {meta['summary_key']}, {meta['name_column']}, summary_version, summary_text, summary_json,
+                source_start_message_id, source_end_message_id, source_message_count,
+                created_by_model, is_active
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                session_id,
+                payload.get("session_name"),
+                next_version,
+                summary_text,
+                dumps_json(payload["summary_json"]) if payload.get("summary_json") is not None else None,
+                payload.get("source_start_message_id"),
+                payload.get("source_end_message_id"),
+                int(payload.get("source_message_count") or 0),
+                payload.get("created_by_model"),
+                1 if is_active else 0,
+            ),
+        )
+        row = database.fetch_one(
+            f"SELECT id FROM {meta['summary_table']} WHERE {meta['summary_key']}=%s AND summary_version=%s LIMIT 1",
+            (session_id, next_version),
+        )
+        self._ensure_active_summary(session_type, session_id)
+        self._sync_summary_state_from_active(session_type, session_id)
+        created = self.get_summary_detail(session_type=session_type, summary_id=int(row["id"])) if row else {}
+        self._log_config_change(
+            config_domain="summary",
+            scope_ref=f"{session_type}:{session_id}",
+            change_type="create",
+            before_json=None,
+            after_json=created,
+            changed_by=changed_by,
+        )
+        return created
+
+    def get_summary_detail(self, *, session_type: str, summary_id: int) -> dict[str, Any]:
+        meta = self._summary_meta(session_type)
+        row = database.fetch_one(
+            f"""
+            SELECT
+                s.id, s.{meta['summary_key']} AS session_id, s.{meta['name_column']} AS session_name,
+                s.summary_version, s.summary_text, s.summary_json,
+                s.source_start_message_id, s.source_end_message_id, s.source_message_count,
+                s.created_by_model, s.is_active, s.created_at, s.updated_at,
+                st.last_message_id, st.last_summary_message_id, st.summary_version AS current_summary_version, st.summary_cooldown_until
+            FROM {meta['summary_table']} s
+            LEFT JOIN {meta['state_table']} st ON s.{meta['summary_key']}=st.{meta['state_key']}
+            WHERE s.id=%s
+            LIMIT 1
+            """,
+            (int(summary_id),),
+        )
+        if not row:
+            raise ValueError("摘要不存在")
+        row["summary_json"] = loads_json(
+            str(row.get("summary_json")) if row.get("summary_json") is not None else None,
+            row.get("summary_json"),
+        )
+        return row
+
+    def update_summary(
+        self,
+        *,
+        session_type: str,
+        summary_id: int,
+        payload: dict[str, Any],
+        changed_by: str,
+    ) -> dict[str, Any]:
+        before = self.get_summary_detail(session_type=session_type, summary_id=summary_id)
+        meta = self._summary_meta(session_type)
+        updates: list[str] = []
+        params: list[Any] = []
+        for field in ["summary_text", "created_by_model", "source_start_message_id", "source_end_message_id", "source_message_count"]:
+            if field not in payload:
+                continue
+            value = payload[field]
+            if field == "source_message_count" and value is not None:
+                value = int(value)
+            updates.append(f"{field}=%s")
+            params.append(value)
+        if "session_name" in payload:
+            updates.append(f"{meta['name_column']}=%s")
+            params.append(payload["session_name"])
+        if "summary_json" in payload:
+            updates.append("summary_json=%s")
+            params.append(dumps_json(payload["summary_json"]) if payload["summary_json"] is not None else None)
+        if "is_active" in payload:
+            is_active = bool(payload["is_active"])
+            if is_active:
+                database.execute(
+                    f"UPDATE {meta['summary_table']} SET is_active=0 WHERE {meta['summary_key']}=%s",
+                    (before["session_id"],),
+                )
+            updates.append("is_active=%s")
+            params.append(1 if is_active else 0)
+        if not updates:
+            return before
+        params.append(int(summary_id))
+        database.execute(
+            f"UPDATE {meta['summary_table']} SET {', '.join(updates)} WHERE id=%s",
+            tuple(params),
+        )
+        self._ensure_active_summary(session_type, int(before["session_id"]))
+        self._sync_summary_state_from_active(session_type, int(before["session_id"]))
+        after = self.get_summary_detail(session_type=session_type, summary_id=summary_id)
+        self._log_config_change(
+            config_domain="summary",
+            scope_ref=f"{session_type}:{before['session_id']}:summary:{summary_id}",
+            change_type="update",
+            before_json=before,
+            after_json=after,
+            changed_by=changed_by,
+        )
+        return after
+
+    def delete_summary(self, *, session_type: str, summary_id: int, changed_by: str) -> dict[str, Any]:
+        before = self.get_summary_detail(session_type=session_type, summary_id=summary_id)
+        meta = self._summary_meta(session_type)
+        database.execute(f"DELETE FROM {meta['summary_table']} WHERE id=%s", (int(summary_id),))
+        self._ensure_active_summary(session_type, int(before["session_id"]))
+        self._sync_summary_state_from_active(session_type, int(before["session_id"]))
+        result = {"deleted": True, "summary_id": int(summary_id)}
+        self._log_config_change(
+            config_domain="summary",
+            scope_ref=f"{session_type}:{before['session_id']}:summary:{summary_id}",
+            change_type="delete",
+            before_json=before,
+            after_json=result,
+            changed_by=changed_by,
+        )
+        return result
+
     def list_summaries(
         self,
         *,
@@ -767,6 +921,92 @@ class AdminService:
                 "s.source_start_message_id, s.source_end_message_id, s.source_message_count, "
                 "s.created_by_model, s.is_active, s.created_at, s.updated_at, "
                 "st.last_message_id, st.last_summary_message_id, st.summary_version AS current_summary_version, st.summary_cooldown_until"
+            ),
+        )
+
+    def _summary_meta(self, session_type: str) -> dict[str, str]:
+        return {
+            "summary_table": "bot_group_summary" if session_type == "group" else "bot_private_summary",
+            "state_table": "bot_group_session_state" if session_type == "group" else "bot_private_session_state",
+            "summary_key": "group_id" if session_type == "group" else "peer_user_id",
+            "state_key": "group_id" if session_type == "group" else "user_id",
+            "name_column": "group_name" if session_type == "group" else "peer_nickname",
+        }
+
+    def _ensure_active_summary(self, session_type: str, session_id: int) -> None:
+        meta = self._summary_meta(session_type)
+        active_row = database.fetch_one(
+            f"SELECT id FROM {meta['summary_table']} WHERE {meta['summary_key']}=%s AND is_active=1 LIMIT 1",
+            (session_id,),
+        )
+        if active_row:
+            return
+        latest_row = database.fetch_one(
+            f"""
+            SELECT id
+            FROM {meta['summary_table']}
+            WHERE {meta['summary_key']}=%s
+            ORDER BY summary_version DESC, id DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+        if latest_row:
+            database.execute(
+                f"UPDATE {meta['summary_table']} SET is_active=1 WHERE id=%s",
+                (int(latest_row["id"]),),
+            )
+
+    def _sync_summary_state_from_active(self, session_type: str, session_id: int) -> None:
+        meta = self._summary_meta(session_type)
+        active_row = database.fetch_one(
+            f"""
+            SELECT summary_version, source_end_message_id
+            FROM {meta['summary_table']}
+            WHERE {meta['summary_key']}=%s AND is_active=1
+            ORDER BY summary_version DESC, id DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+        state = database.fetch_one(
+            f"SELECT last_message_id, summary_cooldown_until FROM {meta['state_table']} WHERE {meta['state_key']}=%s",
+            (session_id,),
+        ) or {}
+        if active_row:
+            database.execute(
+                f"""
+                INSERT INTO {meta['state_table']}({meta['state_key']}, last_message_id, last_summary_message_id, summary_version, summary_cooldown_until)
+                VALUES(%s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    last_message_id=VALUES(last_message_id),
+                    last_summary_message_id=VALUES(last_summary_message_id),
+                    summary_version=VALUES(summary_version),
+                    summary_cooldown_until=VALUES(summary_cooldown_until)
+                """,
+                (
+                    session_id,
+                    state.get("last_message_id"),
+                    int(active_row.get("source_end_message_id") or 0),
+                    int(active_row.get("summary_version") or 0),
+                    state.get("summary_cooldown_until"),
+                ),
+            )
+            return
+        database.execute(
+            f"""
+            INSERT INTO {meta['state_table']}({meta['state_key']}, last_message_id, last_summary_message_id, summary_version, summary_cooldown_until)
+            VALUES(%s, %s, 0, 0, %s)
+            ON DUPLICATE KEY UPDATE
+                last_message_id=VALUES(last_message_id),
+                last_summary_message_id=VALUES(last_summary_message_id),
+                summary_version=VALUES(summary_version),
+                summary_cooldown_until=VALUES(summary_cooldown_until)
+            """,
+            (
+                session_id,
+                state.get("last_message_id"),
+                state.get("summary_cooldown_until"),
             ),
         )
 

@@ -1,13 +1,12 @@
 <template>
   <div>
-    <div class="page-header">
-      <div class="page-title">提示词管理</div>
+    <div class="table-toolbar" style="margin-bottom: 8px">
+      <div style="font-size: 16px; font-weight: 700; color: #111827">提示词管理</div>
       <div>
         <el-button :loading="loading" @click="loadData">刷新</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存提示词</el-button>
       </div>
     </div>
-
     <el-tabs v-model="activeTab">
       <el-tab-pane label="基础人格" name="prompt_base">
         <PromptEditor title="基础人格提示词" field="prompt_base" v-model="form.prompt_base" :default-value="defaults.prompt_base" @reset="resetField" />

@@ -1,14 +1,13 @@
 <template>
   <div>
-    <div class="page-header">
-      <div class="page-title">工具管理</div>
-      <div style="display: flex; gap: 10px">
-        <el-button :loading="loading" @click="loadData">刷新</el-button>
-        <el-button type="primary" @click="openCreateDialog">新增 HTTP 工具</el-button>
-      </div>
-    </div>
-
     <el-card class="page-card">
+      <div class="table-toolbar" style="margin-bottom: 8px">
+        <div style="font-size: 16px; font-weight: 700; color: #111827">工具管理</div>
+        <div style="display: flex; gap: 10px">
+          <el-button :loading="loading" @click="loadData">刷新</el-button>
+          <el-button type="primary" @click="openCreateDialog">新增 HTTP 工具</el-button>
+        </div>
+      </div>
       <el-table :data="tools">
         <el-table-column prop="display_name" label="工具名" min-width="140">
           <template #default="{ row }">{{ row.display_name || row.tool_name }}</template>

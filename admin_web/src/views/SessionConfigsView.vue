@@ -1,16 +1,11 @@
 <template>
   <div>
-    <div class="page-header">
-      <div class="page-title">会话配置</div>
-      <div style="display: flex; gap: 10px">
-        <el-button :loading="loading" @click="loadAll">刷新</el-button>
-        <el-button type="primary" :loading="blocklistSaving" @click="saveBlocklist">保存黑名单</el-button>
-      </div>
-    </div>
-
     <el-tabs v-model="activeTab">
       <el-tab-pane label="群聊配置" name="group">
         <el-card class="page-card">
+          <div class="table-toolbar">
+            <div style="font-size: 16px; font-weight: 700; color: #111827">群聊配置</div>
+          </div>
           <div class="table-toolbar">
             <el-input v-model="groupKeyword" placeholder="搜索群号或群名" style="width: 260px" clearable @keyup.enter="loadGroupConfigs" />
             <el-button type="primary" @click="loadGroupConfigs">查询</el-button>
@@ -51,6 +46,9 @@
       <el-tab-pane label="私聊配置" name="private">
         <el-card class="page-card">
           <div class="table-toolbar">
+            <div style="font-size: 16px; font-weight: 700; color: #111827">私聊配置</div>
+          </div>
+          <div class="table-toolbar">
             <el-input v-model="privateKeyword" placeholder="搜索 QQ 或昵称" style="width: 260px" clearable @keyup.enter="loadPrivateConfigs" />
             <el-button type="primary" @click="loadPrivateConfigs">查询</el-button>
           </div>
@@ -89,7 +87,15 @@
     </el-tabs>
 
     <el-card class="page-card" style="margin-top: 20px">
-      <template #header>黑名单</template>
+      <template #header>
+        <div class="table-toolbar" style="margin-bottom: 0">
+          <span>黑名单</span>
+          <div style="display: flex; gap: 10px">
+            <el-button :loading="loading" @click="loadAll">刷新</el-button>
+            <el-button type="primary" :loading="blocklistSaving" @click="saveBlocklist">保存黑名单</el-button>
+          </div>
+        </div>
+      </template>
       <div class="split-grid">
         <el-form label-position="top">
           <el-form-item label="黑名单群号">

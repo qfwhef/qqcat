@@ -185,6 +185,29 @@ class MessageBatchDeletePayload(BaseModel):
     message_ids: list[int] = Field(default_factory=list)
 
 
+class SummaryCreatePayload(BaseModel):
+    session_id: int
+    session_name: str | None = None
+    summary_text: str
+    summary_json: dict[str, Any] | None = None
+    source_start_message_id: int | None = None
+    source_end_message_id: int | None = None
+    source_message_count: int | None = None
+    created_by_model: str | None = None
+    is_active: bool = True
+
+
+class SummaryUpdatePayload(BaseModel):
+    session_name: str | None = None
+    summary_text: str | None = None
+    summary_json: dict[str, Any] | None = None
+    source_start_message_id: int | None = None
+    source_end_message_id: int | None = None
+    source_message_count: int | None = None
+    created_by_model: str | None = None
+    is_active: bool | None = None
+
+
 def _model_dump(model: BaseModel) -> dict[str, Any]:
     if hasattr(model, "model_dump"):
         return dict(model.model_dump(exclude_none=True))
@@ -891,6 +914,56 @@ async def list_group_summaries(
     )
 
 
+@router.post("/summaries/group")
+async def create_group_summary(
+    payload: SummaryCreatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.create_summary(
+        session_type="group",
+        payload=_model_dump(payload),
+        changed_by=_changed_by(admin),
+    )
+
+
+@router.put("/summaries/group/{summary_id}")
+async def update_group_summary(
+    summary_id: int,
+    payload: SummaryUpdatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.update_summary(
+            session_type="group",
+            summary_id=summary_id,
+            payload=_model_dump(payload),
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.delete("/summaries/group/{summary_id}")
+async def delete_group_summary(
+    summary_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.delete_summary(
+            session_type="group",
+            summary_id=summary_id,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.get("/summaries/private")
 async def list_private_summaries(
     request: Request,
@@ -908,6 +981,56 @@ async def list_private_summaries(
         session_id=session_id,
         is_active=is_active,
     )
+
+
+@router.post("/summaries/private")
+async def create_private_summary(
+    payload: SummaryCreatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.create_summary(
+        session_type="private",
+        payload=_model_dump(payload),
+        changed_by=_changed_by(admin),
+    )
+
+
+@router.put("/summaries/private/{summary_id}")
+async def update_private_summary(
+    summary_id: int,
+    payload: SummaryUpdatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.update_summary(
+            session_type="private",
+            summary_id=summary_id,
+            payload=_model_dump(payload),
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.delete("/summaries/private/{summary_id}")
+async def delete_private_summary(
+    summary_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.delete_summary(
+            session_type="private",
+            summary_id=summary_id,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/ai-call-logs")

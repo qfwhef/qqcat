@@ -1,17 +1,15 @@
 <template>
   <div>
-    <div class="page-header">
-      <div class="page-title">访问控制</div>
-      <div style="display: flex; gap: 10px">
-        <el-button :loading="loading" @click="loadData">刷新</el-button>
-        <el-button type="primary" @click="openAdminDialog()">新增管理员</el-button>
-      </div>
-    </div>
-
     <div class="split-grid">
       <el-card class="page-card">
         <template #header>
-          <span>管理员白名单</span>
+          <div class="table-toolbar" style="margin-bottom: 0">
+            <span>管理员白名单</span>
+            <div style="display: flex; gap: 10px">
+              <el-button :loading="loading" @click="loadData">刷新</el-button>
+              <el-button type="primary" @click="openAdminDialog()">新增管理员</el-button>
+            </div>
+          </div>
         </template>
         <el-table :data="adminUsers">
           <el-table-column prop="user_id" label="QQ 号" min-width="120" />

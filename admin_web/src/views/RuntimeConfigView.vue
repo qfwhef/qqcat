@@ -1,14 +1,13 @@
 <template>
   <div>
-    <div class="page-header">
-      <div class="page-title">AI 运行配置</div>
-      <div>
-        <el-button :loading="loading" @click="loadData">刷新</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
-      </div>
-    </div>
-
     <el-card class="page-card">
+      <div class="table-toolbar" style="margin-bottom: 8px">
+        <div style="font-size: 16px; font-weight: 700; color: #111827">AI 运行配置</div>
+        <div>
+          <el-button :loading="loading" @click="loadData">刷新</el-button>
+          <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
+        </div>
+      </div>
       <el-form label-position="top" :model="form">
         <div class="split-grid">
           <div>
