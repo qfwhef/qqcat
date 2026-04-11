@@ -13,6 +13,7 @@ from ..application.command_service import CommandService
 from ..application.config_service import ConfigService
 from ..application.minecraft_service import MinecraftService
 from ..application.secret_service import SecretService, secret_service
+from ..application.scheduled_task_service import ScheduledTaskService
 from ..core.config import settings
 from ..infrastructure.runtime_config_store import RuntimeConfigStore, runtime_config_store
 from ..infrastructure.session_store import SessionStore, session_store
@@ -31,6 +32,7 @@ class AppContainer:
     chat_service: ChatService
     config_service: ConfigService
     minecraft_service: MinecraftService
+    scheduled_task_service: ScheduledTaskService
     admin_auth_service: AdminAuthService
     admin_service: AdminService
 
@@ -66,11 +68,13 @@ def get_container() -> AppContainer:
     )
     config_service = ConfigService(runtime_config_store=runtime_config_store)
     minecraft_service = MinecraftService(secret_service)
+    scheduled_task_service = ScheduledTaskService(ai_service=ai_service)
     admin_service = AdminService(
         runtime_config_store=runtime_config_store,
         secret_service=secret_service,
         admin_auth_service=admin_auth_service,
         minecraft_service=minecraft_service,
+        scheduled_task_service=scheduled_task_service,
     )
 
     _container = AppContainer(
@@ -84,6 +88,7 @@ def get_container() -> AppContainer:
         chat_service=chat_service,
         config_service=config_service,
         minecraft_service=minecraft_service,
+        scheduled_task_service=scheduled_task_service,
         admin_auth_service=admin_auth_service,
         admin_service=admin_service,
     )

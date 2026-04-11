@@ -83,6 +83,32 @@ CREATE TABLE IF NOT EXISTS bot_tool_config (
     KEY idx_tool_type_enabled (tool_type, is_enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具配置表';
 
+CREATE TABLE IF NOT EXISTS bot_scheduled_task (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    name VARCHAR(128) NOT NULL COMMENT '任务名称',
+    description TEXT NULL COMMENT '任务描述',
+    status VARCHAR(16) NOT NULL DEFAULT 'active' COMMENT '状态：active/paused/completed',
+    schedule_type VARCHAR(16) NOT NULL COMMENT '调度类型：once/interval/cron',
+    cron_expression VARCHAR(64) NULL COMMENT 'Cron 表达式',
+    run_at DATETIME NULL COMMENT '一次性运行时间',
+    interval_seconds INT UNSIGNED NULL COMMENT '间隔秒数',
+    target_type VARCHAR(16) NOT NULL COMMENT '投递类型：group/private',
+    target_ids_json JSON NOT NULL COMMENT '投递群号或QQ号列表',
+    message_content TEXT NOT NULL COMMENT '投递消息内容',
+    last_run_at DATETIME NULL COMMENT '上次运行时间',
+    next_run_at DATETIME NULL COMMENT '下次运行时间',
+    last_run_status VARCHAR(16) NULL COMMENT '上次运行结果：success/failed',
+    last_error TEXT NULL COMMENT '最近一次错误信息',
+    run_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '累计运行次数',
+    created_by VARCHAR(64) NULL COMMENT '创建人',
+    updated_by VARCHAR(64) NULL COMMENT '更新人',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    KEY idx_scheduled_task_status_next (status, next_run_at),
+    KEY idx_scheduled_task_target_type (target_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务表';
+
 CREATE TABLE IF NOT EXISTS bot_admin_user (
     user_id BIGINT NOT NULL COMMENT '管理员QQ',
     nickname VARCHAR(255) NULL COMMENT '管理员昵称',

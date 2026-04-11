@@ -123,6 +123,13 @@ class AIService:
         )
 
     @staticmethod
+    def _is_group_event(event: Event) -> bool:
+        return isinstance(event, GroupMessageEvent) or getattr(event, "group_id", None) not in {None, ""}
+
+    def _is_private_event(self, event: Event) -> bool:
+        return not self._is_group_event(event)
+
+    @staticmethod
     def clean_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         while history and history[0].get("role") == "assistant":
             history.pop(0)
@@ -161,7 +168,7 @@ class AIService:
 
     async def maybe_summarize_memory(self, event: Event) -> None:
         history = self.session_store.get_history(event)
-        is_private = isinstance(event, PrivateMessageEvent)
+        is_private = self._is_private_event(event)
         await self._summarize_if_needed(event, history, is_private)
 
     async def _summarize_if_needed(
@@ -300,12 +307,14 @@ class AIService:
         user_name: str,
         is_at_me: bool,
     ) -> tuple[bool, str]:
-        is_private = isinstance(event, PrivateMessageEvent)
+        is_private = self._is_private_event(event)
         history = self.session_store.get_history(event)
         image_urls = self.parser.extract_image_urls(event)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if isinstance(event, GroupMessageEvent):
-            context_msg = f"[{timestamp}][{user_name}|{event.user_id}]: {msg}"
+        if self._is_group_event(event):
+            user_id = int(getattr(event, "user_id", 0) or 0)
+            identity = f"{user_name}|{user_id}" if user_id > 0 else user_name
+            context_msg = f"[{timestamp}][{identity}]: {msg}"
         else:
             context_msg = f"[{timestamp}][{user_name}]: {msg}"
         context_msg = await self._describe_images_in_context(context_msg, skip_urls=image_urls)

@@ -14,6 +14,7 @@ from ..application.prompt_defaults import (
     DEFAULT_PROMPT_LOGIC_PRIVATE,
     DEFAULT_PROMPT_SUMMARY_SYSTEM,
 )
+from ..application.scheduled_task_service import ScheduledTaskService
 from ..application.secret_service import SecretService
 from ..core.constants import (
     CFG_BLOCKED_GROUPS,
@@ -44,11 +45,13 @@ class AdminService:
         secret_service: SecretService,
         admin_auth_service: AdminAuthService,
         minecraft_service: MinecraftService,
+        scheduled_task_service: ScheduledTaskService,
     ) -> None:
         self.runtime_config_store = runtime_config_store
         self.secret_service = secret_service
         self.admin_auth_service = admin_auth_service
         self.minecraft_service = minecraft_service
+        self.scheduled_task_service = scheduled_task_service
 
     def get_overview(self) -> dict[str, Any]:
         since = datetime.now() - timedelta(hours=24)
@@ -237,6 +240,80 @@ class AdminService:
                 {},
             )
         return rows
+
+    def list_scheduled_tasks(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        keyword: str = "",
+        status: str = "",
+        target_type: str = "",
+    ) -> dict[str, Any]:
+        return self.scheduled_task_service.list_tasks(
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            status=status,
+            target_type=target_type,
+        )
+
+    def create_scheduled_task(self, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
+        task = self.scheduled_task_service.create_task(payload, changed_by=changed_by)
+        self._log_config_change(
+            config_domain="scheduled_task",
+            scope_ref=f"task:{task.get('id')}",
+            change_type="create",
+            before_json=None,
+            after_json=task,
+            changed_by=changed_by,
+        )
+        return task
+
+    def update_scheduled_task(self, task_id: int, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
+        before = self.scheduled_task_service.get_task(task_id)
+        if not before:
+            raise ValueError("定时任务不存在")
+        task = self.scheduled_task_service.update_task(task_id, payload, changed_by=changed_by)
+        self._log_config_change(
+            config_domain="scheduled_task",
+            scope_ref=f"task:{task_id}",
+            change_type="update",
+            before_json=before,
+            after_json=task,
+            changed_by=changed_by,
+        )
+        return task
+
+    def delete_scheduled_task(self, task_id: int, *, changed_by: str) -> dict[str, Any]:
+        before = self.scheduled_task_service.get_task(task_id)
+        if not before:
+            raise ValueError("定时任务不存在")
+        result = self.scheduled_task_service.delete_task(task_id)
+        self._log_config_change(
+            config_domain="scheduled_task",
+            scope_ref=f"task:{task_id}",
+            change_type="delete",
+            before_json=before,
+            after_json=result,
+            changed_by=changed_by,
+        )
+        return result
+
+    async def run_scheduled_task_now(self, task_id: int, *, changed_by: str) -> dict[str, Any]:
+        before = self.scheduled_task_service.get_task(task_id)
+        if not before:
+            raise ValueError("定时任务不存在")
+        task = await self.scheduled_task_service.run_task_now(task_id)
+        self._log_config_change(
+            config_domain="scheduled_task",
+            scope_ref=f"task:{task_id}",
+            change_type="update",
+            before_json=before,
+            after_json=task,
+            changed_by=changed_by,
+        )
+        return task
 
     def create_http_tool(self, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
         tool_name = str(payload.get("tool_name") or "").strip()

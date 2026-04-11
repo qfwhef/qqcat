@@ -22,6 +22,7 @@ ADMIN_MENUS = [
     {"key": "overview", "label": "概览", "path": "/admin-ui/overview"},
     {"key": "runtime", "label": "AI 运行配置", "path": "/admin-ui/runtime"},
     {"key": "tools", "label": "工具管理", "path": "/admin-ui/tools"},
+    {"key": "scheduled-tasks", "label": "定时任务", "path": "/admin-ui/scheduled-tasks"},
     {"key": "prompts", "label": "提示词", "path": "/admin-ui/prompts"},
     {"key": "access", "label": "访问控制", "path": "/admin-ui/access"},
     {"key": "session-configs", "label": "会话配置", "path": "/admin-ui/session-configs"},
@@ -94,6 +95,32 @@ class HttpToolCreatePayload(BaseModel):
     body_template: str | None = None
     timeout_seconds: int = Field(default=15, ge=1, le=300)
     is_enabled: bool = True
+
+
+class ScheduledTaskCreatePayload(BaseModel):
+    name: str
+    description: str | None = None
+    status: str = "active"
+    schedule_type: str
+    cron_expression: str | None = None
+    run_at: str | None = None
+    interval_seconds: int | None = Field(default=None, ge=1, le=31536000)
+    target_type: str
+    target_ids: list[int]
+    message_content: str
+
+
+class ScheduledTaskUpdatePayload(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    status: str | None = None
+    schedule_type: str | None = None
+    cron_expression: str | None = None
+    run_at: str | None = None
+    interval_seconds: int | None = Field(default=None, ge=1, le=31536000)
+    target_type: str | None = None
+    target_ids: list[int] | None = None
+    message_content: str | None = None
 
 
 class ToolUpdatePayload(BaseModel):
@@ -337,6 +364,92 @@ async def update_secret(
         value_hint=payload.value_hint,
         changed_by=_changed_by(admin),
     )
+
+
+@router.get("/scheduled-tasks")
+async def list_scheduled_tasks(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    keyword: str = Query(default=""),
+    status: str = Query(default=""),
+    target_type: str = Query(default=""),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.list_scheduled_tasks(
+        page=page,
+        page_size=page_size,
+        keyword=keyword,
+        status=status,
+        target_type=target_type,
+    )
+
+
+@router.post("/scheduled-tasks")
+async def create_scheduled_task(
+    payload: ScheduledTaskCreatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.create_scheduled_task(
+            _model_dump(payload),
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.put("/scheduled-tasks/{task_id}")
+async def update_scheduled_task(
+    task_id: int,
+    payload: ScheduledTaskUpdatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.update_scheduled_task(
+            task_id,
+            _model_dump(payload),
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/scheduled-tasks/{task_id}")
+async def delete_scheduled_task(
+    task_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.delete_scheduled_task(
+            task_id,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/scheduled-tasks/{task_id}/run")
+async def run_scheduled_task_now(
+    task_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return await get_container().admin_service.run_scheduled_task_now(
+            task_id,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/tools")

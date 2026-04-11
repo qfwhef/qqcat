@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from nonebot import get_driver
 
+from xiaomiao_bot.bootstrap.container import get_container
 from xiaomiao_bot.presentation.http.admin_routes import router
 
 
@@ -68,6 +69,17 @@ def _register_admin_ui() -> None:
 
     app.include_router(ui_router)
     app.state.xiaomiao_admin_ui_registered = True
+
+    @driver.on_startup
+    async def _startup_scheduled_tasks() -> None:
+        if getattr(app.state, "xiaomiao_scheduled_tasks_started", False):
+            return
+        await get_container().scheduled_task_service.start()
+        app.state.xiaomiao_scheduled_tasks_started = True
+
+    @driver.on_shutdown
+    async def _shutdown_scheduled_tasks() -> None:
+        await get_container().scheduled_task_service.shutdown()
 
 
 _register_admin_ui()

@@ -30,10 +30,14 @@ class SessionStore:
         self._known_tables: set[str] = set()
 
     @staticmethod
-    def get_scope(event: Event) -> SessionScope:
+    def get_scope(event: Event | SessionScope) -> SessionScope:
+        if isinstance(event, SessionScope):
+            return event
         if isinstance(event, GroupMessageEvent):
             return SessionScope(session_type="group", session_id=int(event.group_id))
-        return SessionScope(session_type="private", session_id=int(event.user_id))
+        if getattr(event, "group_id", None) not in {None, ""}:
+            return SessionScope(session_type="group", session_id=int(getattr(event, "group_id")))
+        return SessionScope(session_type="private", session_id=int(getattr(event, "user_id")))
 
     def is_sleeping(self, event: Event) -> bool:
         row = self._get_config_row(self.get_scope(event))

@@ -94,6 +94,7 @@ const sessionMenuChildren = (type: "group" | "private") => {
 
 const fallbackMenus: MenuNode[] = [
   { key: "overview", label: "概览", path: "/overview" },
+  { key: "scheduled-tasks", label: "定时任务", path: "/scheduled-tasks" },
   { key: "runtime", label: "AI 运行配置", path: "/runtime" },
   { key: "tools", label: "工具管理", path: "/tools" },
   { key: "prompts", label: "提示词", path: "/prompts" },

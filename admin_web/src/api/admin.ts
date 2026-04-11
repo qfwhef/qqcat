@@ -25,6 +25,21 @@ export const adminApi = {
   getOverview() {
     return http.get('/overview').then((res) => res.data)
   },
+  getScheduledTasks(params: Record<string, unknown>) {
+    return http.get<PagedResult>('/scheduled-tasks', { params: cleanParams(params) }).then((res) => res.data)
+  },
+  createScheduledTask(payload: Record<string, unknown>) {
+    return http.post('/scheduled-tasks', payload).then((res) => res.data)
+  },
+  updateScheduledTask(taskId: number, payload: Record<string, unknown>) {
+    return http.put(`/scheduled-tasks/${taskId}`, payload).then((res) => res.data)
+  },
+  deleteScheduledTask(taskId: number) {
+    return http.delete(`/scheduled-tasks/${taskId}`).then((res) => res.data)
+  },
+  runScheduledTaskNow(taskId: number) {
+    return http.post(`/scheduled-tasks/${taskId}/run`).then((res) => res.data)
+  },
   getRuntimeConfig() {
     return http.get('/runtime-config').then((res) => res.data)
   },
