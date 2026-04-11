@@ -1,5 +1,7 @@
 # QQ猫娘
 
+## 此readme由ai生成
+
 这是一个基于 `NoneBot2 + OneBot V11 + MySQL` 的 QQ 机器人项目。
 
 你现在这套项目的实际部署方式是：
