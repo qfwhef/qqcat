@@ -6,6 +6,7 @@ from ..application.prompt_defaults import (
     DEFAULT_PROMPT_BASE,
     DEFAULT_PROMPT_LOGIC_AT_ME,
     DEFAULT_PROMPT_LOGIC_GROUP,
+    DEFAULT_PROMPT_LOGIC_POKE,
     DEFAULT_PROMPT_LOGIC_PRIVATE,
     DEFAULT_PROMPT_SUMMARY_SYSTEM,
 )
@@ -19,6 +20,7 @@ from ..core.constants import (
     CFG_PROMPT_BASE,
     CFG_PROMPT_LOGIC_AT_ME,
     CFG_PROMPT_LOGIC_GROUP,
+    CFG_PROMPT_LOGIC_POKE,
     CFG_PROMPT_LOGIC_PRIVATE,
     CFG_PROMPT_SUMMARY_SYSTEM,
     CFG_SUMMARY_ONLY_GROUP,
@@ -62,6 +64,9 @@ class ConfigService:
             ),
             "prompt_logic_at_me": str(
                 self.runtime_config_store.get(CFG_PROMPT_LOGIC_AT_ME, DEFAULT_PROMPT_LOGIC_AT_ME)
+            ),
+            "prompt_logic_poke": str(
+                self.runtime_config_store.get(CFG_PROMPT_LOGIC_POKE, DEFAULT_PROMPT_LOGIC_POKE)
             ),
             "prompt_logic_group": str(
                 self.runtime_config_store.get(CFG_PROMPT_LOGIC_GROUP, DEFAULT_PROMPT_LOGIC_GROUP)
@@ -112,6 +117,7 @@ class ConfigService:
         prompt_base: str | None = None,
         prompt_logic_private: str | None = None,
         prompt_logic_at_me: str | None = None,
+        prompt_logic_poke: str | None = None,
         prompt_logic_group: str | None = None,
         prompt_summary_system: str | None = None,
     ) -> dict:
@@ -122,6 +128,8 @@ class ConfigService:
             payload[CFG_PROMPT_LOGIC_PRIVATE] = prompt_logic_private
         if prompt_logic_at_me is not None:
             payload[CFG_PROMPT_LOGIC_AT_ME] = prompt_logic_at_me
+        if prompt_logic_poke is not None:
+            payload[CFG_PROMPT_LOGIC_POKE] = prompt_logic_poke
         if prompt_logic_group is not None:
             payload[CFG_PROMPT_LOGIC_GROUP] = prompt_logic_group
         if prompt_summary_system is not None:

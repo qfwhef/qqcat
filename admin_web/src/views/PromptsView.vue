@@ -18,6 +18,9 @@
       <el-tab-pane label="@我逻辑" name="prompt_logic_at_me">
         <PromptEditor title="@机器人逻辑提示词" field="prompt_logic_at_me" v-model="form.prompt_logic_at_me" :default-value="defaults.prompt_logic_at_me" @reset="resetField" />
       </el-tab-pane>
+      <el-tab-pane label="拍一拍你" name="prompt_logic_poke">
+        <PromptEditor title="用户拍了一下你提示词" field="prompt_logic_poke" v-model="form.prompt_logic_poke" :default-value="defaults.prompt_logic_poke" @reset="resetField" />
+      </el-tab-pane>
       <el-tab-pane label="群聊逻辑" name="prompt_logic_group">
         <PromptEditor title="群聊逻辑提示词" field="prompt_logic_group" v-model="form.prompt_logic_group" :default-value="defaults.prompt_logic_group" @reset="resetField" />
       </el-tab-pane>
@@ -38,6 +41,7 @@ type PromptField =
   | 'prompt_base'
   | 'prompt_logic_private'
   | 'prompt_logic_at_me'
+  | 'prompt_logic_poke'
   | 'prompt_logic_group'
   | 'prompt_summary_system'
 
@@ -48,6 +52,7 @@ const form = reactive<Record<PromptField, string>>({
   prompt_base: '',
   prompt_logic_private: '',
   prompt_logic_at_me: '',
+  prompt_logic_poke: '',
   prompt_logic_group: '',
   prompt_summary_system: '',
 })
@@ -55,6 +60,7 @@ const defaults = reactive<Record<PromptField, string>>({
   prompt_base: '',
   prompt_logic_private: '',
   prompt_logic_at_me: '',
+  prompt_logic_poke: '',
   prompt_logic_group: '',
   prompt_summary_system: '',
 })

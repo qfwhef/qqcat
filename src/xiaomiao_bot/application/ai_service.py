@@ -19,6 +19,7 @@ from ..application.prompt_defaults import (
     DEFAULT_PROMPT_BASE,
     DEFAULT_PROMPT_LOGIC_AT_ME,
     DEFAULT_PROMPT_LOGIC_GROUP,
+    DEFAULT_PROMPT_LOGIC_POKE,
     DEFAULT_PROMPT_LOGIC_PRIVATE,
     DEFAULT_PROMPT_SUMMARY_SYSTEM,
 )
@@ -30,6 +31,7 @@ from ..core.constants import (
     CFG_PROMPT_BASE,
     CFG_PROMPT_LOGIC_AT_ME,
     CFG_PROMPT_LOGIC_GROUP,
+    CFG_PROMPT_LOGIC_POKE,
     CFG_PROMPT_LOGIC_PRIVATE,
     CFG_PROMPT_SUMMARY_SYSTEM,
     CFG_SUMMARY_COOLDOWN_SECONDS,
@@ -108,7 +110,9 @@ class AIService:
     def get_base_prompt(self) -> str:
         return str(self.runtime_config_store.get(CFG_PROMPT_BASE, DEFAULT_PROMPT_BASE))
 
-    def get_logic_prompt(self, is_private: bool, is_at_me: bool) -> str:
+    def get_logic_prompt(self, is_private: bool, is_at_me: bool, is_poke: bool = False) -> str:
+        if is_poke:
+            return str(self.runtime_config_store.get(CFG_PROMPT_LOGIC_POKE, DEFAULT_PROMPT_LOGIC_POKE))
         if is_private:
             return str(
                 self.runtime_config_store.get(CFG_PROMPT_LOGIC_PRIVATE, DEFAULT_PROMPT_LOGIC_PRIVATE)
@@ -306,6 +310,7 @@ class AIService:
         msg: str,
         user_name: str,
         is_at_me: bool,
+        is_poke: bool = False,
     ) -> tuple[bool, str]:
         is_private = self._is_private_event(event)
         history = self.session_store.get_history(event)
@@ -329,7 +334,7 @@ class AIService:
                 "role": "system",
                 "content": self._build_system_prompt(
                     base_prompt=self.get_base_prompt(),
-                    logic_prompt=self.get_logic_prompt(is_private, is_at_me),
+                    logic_prompt=self.get_logic_prompt(is_private, is_at_me, is_poke=is_poke),
                     summary=summary,
                     context_msg=context_msg,
                 ),

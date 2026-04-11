@@ -11,6 +11,7 @@ from ...application.prompt_defaults import (
     DEFAULT_PROMPT_BASE,
     DEFAULT_PROMPT_LOGIC_AT_ME,
     DEFAULT_PROMPT_LOGIC_GROUP,
+    DEFAULT_PROMPT_LOGIC_POKE,
     DEFAULT_PROMPT_LOGIC_PRIVATE,
     DEFAULT_PROMPT_SUMMARY_SYSTEM,
 )
@@ -75,6 +76,7 @@ class PromptPayload(BaseModel):
     prompt_base: str | None = None
     prompt_logic_private: str | None = None
     prompt_logic_at_me: str | None = None
+    prompt_logic_poke: str | None = None
     prompt_logic_group: str | None = None
     prompt_summary_system: str | None = None
 
@@ -323,6 +325,7 @@ async def get_prompt_defaults(
         "prompt_base": DEFAULT_PROMPT_BASE,
         "prompt_logic_private": DEFAULT_PROMPT_LOGIC_PRIVATE,
         "prompt_logic_at_me": DEFAULT_PROMPT_LOGIC_AT_ME,
+        "prompt_logic_poke": DEFAULT_PROMPT_LOGIC_POKE,
         "prompt_logic_group": DEFAULT_PROMPT_LOGIC_GROUP,
         "prompt_summary_system": DEFAULT_PROMPT_SUMMARY_SYSTEM,
     }

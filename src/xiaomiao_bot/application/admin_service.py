@@ -11,6 +11,7 @@ from ..application.prompt_defaults import (
     DEFAULT_PROMPT_BASE,
     DEFAULT_PROMPT_LOGIC_AT_ME,
     DEFAULT_PROMPT_LOGIC_GROUP,
+    DEFAULT_PROMPT_LOGIC_POKE,
     DEFAULT_PROMPT_LOGIC_PRIVATE,
     DEFAULT_PROMPT_SUMMARY_SYSTEM,
 )
@@ -24,6 +25,7 @@ from ..core.constants import (
     CFG_PROMPT_BASE,
     CFG_PROMPT_LOGIC_AT_ME,
     CFG_PROMPT_LOGIC_GROUP,
+    CFG_PROMPT_LOGIC_POKE,
     CFG_PROMPT_LOGIC_PRIVATE,
     CFG_PROMPT_SUMMARY_SYSTEM,
     CFG_SUMMARY_ONLY_GROUP,
@@ -136,6 +138,9 @@ class AdminService:
             ),
             "prompt_logic_at_me": str(
                 self.runtime_config_store.get(CFG_PROMPT_LOGIC_AT_ME, DEFAULT_PROMPT_LOGIC_AT_ME)
+            ),
+            "prompt_logic_poke": str(
+                self.runtime_config_store.get(CFG_PROMPT_LOGIC_POKE, DEFAULT_PROMPT_LOGIC_POKE)
             ),
             "prompt_logic_group": str(
                 self.runtime_config_store.get(CFG_PROMPT_LOGIC_GROUP, DEFAULT_PROMPT_LOGIC_GROUP)

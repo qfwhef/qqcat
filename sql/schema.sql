@@ -1,8 +1,4 @@
 -- 小喵机器人 V2 数据库结构
--- 目标：
--- 1. 用结构化字段替代 Redis 风格 KV 表
--- 2. 为运行时配置、可视化管理、热更新、消息审计、摘要增量压缩提供支撑
--- 3. 群聊与私聊分表，便于索引优化与后续归档
 
 CREATE TABLE IF NOT EXISTS bot_ai_runtime_config (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
