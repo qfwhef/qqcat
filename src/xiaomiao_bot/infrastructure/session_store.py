@@ -714,6 +714,45 @@ class SessionStore:
         self._refresh_or_clear_last_message_state(scope)
         return deleted_count
 
+    def delete_session_for_admin(
+        self,
+        *,
+        session_type: str,
+        session_id: int,
+    ) -> dict[str, Any]:
+        scope = SessionScope(session_type=session_type, session_id=int(session_id))
+        table_name = self.get_message_table_name(session_type, session_id) or self._compose_message_table_name(scope)
+        summary_table, summary_key = self._summary_table(scope)
+        state_table, state_key = self._state_table(scope)
+
+        message_count = 0
+        if self._dynamic_table_exists(table_name):
+            row = database.fetch_one(
+                f"SELECT COUNT(*) AS total FROM {self._quoted_table_name(table_name)}",
+                (),
+            )
+            message_count = int(row["total"] or 0) if row else 0
+            database.execute(f"DROP TABLE IF EXISTS {self._quoted_table_name(table_name)}", ())
+            self._known_tables.discard(self._safe_table_name(table_name))
+
+        database.execute(
+            "DELETE FROM bot_message_session_registry WHERE session_type=%s AND session_id=%s",
+            (session_type, int(session_id)),
+        )
+        database.execute(
+            "DELETE FROM bot_ai_call_log WHERE session_type=%s AND session_id=%s",
+            (session_type, int(session_id)),
+        )
+        database.execute(f"DELETE FROM {summary_table} WHERE {summary_key}=%s", (scope.session_id,))
+        database.execute(f"DELETE FROM {state_table} WHERE {state_key}=%s", (scope.session_id,))
+        return {
+            "deleted": True,
+            "session_type": session_type,
+            "session_id": int(session_id),
+            "message_count": message_count,
+            "table_name": table_name,
+        }
+
     @staticmethod
     def _summary_table(scope: SessionScope) -> tuple[str, str]:
         if scope.session_type == "group":
@@ -1102,12 +1141,18 @@ class SessionStore:
                 if display_name:
                     self._sync_message_registry(scope, display_name=display_name)
             return table_name
+        fallback_table_name = self._compose_message_table_name(scope)
+        if self._dynamic_table_exists(fallback_table_name):
+            if create:
+                self._ensure_dynamic_message_table(scope, fallback_table_name)
+                if display_name:
+                    self._sync_message_registry(scope, display_name=display_name, table_name=fallback_table_name)
+            return fallback_table_name
         if not create:
             return None
-        table_name = self._compose_message_table_name(scope)
-        self._ensure_dynamic_message_table(scope, table_name)
-        self._sync_message_registry(scope, display_name=display_name)
-        return table_name
+        self._ensure_dynamic_message_table(scope, fallback_table_name)
+        self._sync_message_registry(scope, display_name=display_name, table_name=fallback_table_name)
+        return fallback_table_name
 
     def _registry_row(self, scope: SessionScope) -> dict[str, Any] | None:
         self.ensure_message_registry_schema()
@@ -1196,8 +1241,14 @@ class SessionStore:
                 )
             self._known_tables.add(safe_name)
 
-    def _sync_message_registry(self, scope: SessionScope, *, display_name: str | None = None) -> None:
-        table_name = self._message_table(scope, create=False)
+    def _sync_message_registry(
+        self,
+        scope: SessionScope,
+        *,
+        display_name: str | None = None,
+        table_name: str | None = None,
+    ) -> None:
+        table_name = table_name or self._message_table(scope, create=False)
         if not table_name:
             return
         stats = database.fetch_one(
@@ -1231,6 +1282,23 @@ class SessionStore:
                 stats.get("last_message_at"),
             ),
         )
+
+    def _dynamic_table_exists(self, table_name: str) -> bool:
+        safe_name = self._safe_table_name(table_name)
+        if safe_name in self._known_tables:
+            return True
+        row = database.fetch_one(
+            """
+            SELECT COUNT(*) AS total
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = %s
+            """,
+            (safe_name,),
+        )
+        exists = bool(row and int(row.get("total") or 0) > 0)
+        if exists:
+            self._known_tables.add(safe_name)
+        return exists
 
     @staticmethod
     def _compose_message_table_name(scope: SessionScope) -> str:

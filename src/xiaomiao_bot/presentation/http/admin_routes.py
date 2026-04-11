@@ -780,6 +780,20 @@ async def list_group_message_sessions(
     )
 
 
+@router.delete("/message-sessions/group/{session_id}")
+async def delete_group_message_session(
+    session_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.delete_message_session(
+        session_type="group",
+        session_id=session_id,
+        changed_by=_changed_by(admin),
+    )
+
+
 @router.get("/messages/private")
 async def list_private_messages(
     request: Request,
@@ -892,6 +906,20 @@ async def list_private_message_sessions(
             session_type="private",
             keyword=keyword,
         )
+    )
+
+
+@router.delete("/message-sessions/private/{session_id}")
+async def delete_private_message_session(
+    session_id: int,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.delete_message_session(
+        session_type="private",
+        session_id=session_id,
+        changed_by=_changed_by(admin),
     )
 
 

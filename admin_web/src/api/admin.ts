@@ -118,6 +118,9 @@ export const adminApi = {
   getGroupMessageSessions(params: Record<string, unknown> = {}) {
     return http.get<PagedResult>('/message-sessions/group', { params: cleanParams(params) }).then((res) => res.data)
   },
+  deleteGroupMessageSession(sessionId: number) {
+    return http.delete(`/message-sessions/group/${sessionId}`).then((res) => res.data)
+  },
   getPrivateMessages(params: Record<string, unknown>) {
     return http.get<PagedResult>('/messages/private', { params: cleanParams(params) }).then((res) => res.data)
   },
@@ -135,6 +138,9 @@ export const adminApi = {
   },
   getPrivateMessageSessions(params: Record<string, unknown> = {}) {
     return http.get<PagedResult>('/message-sessions/private', { params: cleanParams(params) }).then((res) => res.data)
+  },
+  deletePrivateMessageSession(sessionId: number) {
+    return http.delete(`/message-sessions/private/${sessionId}`).then((res) => res.data)
   },
   getGroupSummaries(params: Record<string, unknown>) {
     return http.get<PagedResult>('/summaries/group', { params: cleanParams(params) }).then((res) => res.data)

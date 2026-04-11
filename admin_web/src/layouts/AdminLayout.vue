@@ -120,6 +120,11 @@ const menus = computed<MenuNode[]>(() => {
           path: "/messages/group",
           children: [
             {
+              key: "messages-session-manager",
+              label: "会话管理",
+              path: "/messages/session-manager",
+            },
+            {
               key: "messages-group",
               label: "群聊消息",
               path: "/messages/group",
@@ -170,6 +175,10 @@ const loadMessageMenus = async () => {
   privateSessions.value = privateRes.items || [];
 };
 
+const handleMessageSessionsUpdated = () => {
+  void loadMessageMenus();
+};
+
 const handleLogout = async () => {
   await authStore.logout();
   ElMessage.success("已退出后台登录");
@@ -197,8 +206,12 @@ const startResize = (event: MouseEvent) => {
   };
 };
 
-onMounted(loadMessageMenus);
+onMounted(() => {
+  window.addEventListener("message-sessions-updated", handleMessageSessionsUpdated);
+  void loadMessageMenus();
+});
 onBeforeUnmount(() => {
+  window.removeEventListener("message-sessions-updated", handleMessageSessionsUpdated);
   removeResizeListeners?.();
 });
 </script>

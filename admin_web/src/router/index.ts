@@ -32,6 +32,11 @@ const router = createRouter({
           component: () => import('../views/SessionConfigsView.vue'),
         },
         { path: 'messages', redirect: '/messages/group' },
+        {
+          path: 'messages/session-manager',
+          name: 'messages-session-manager',
+          component: () => import('../views/MessageSessionsView.vue'),
+        },
         { path: 'messages/group', name: 'messages-group', component: () => import('../views/MessagesView.vue') },
         {
           path: 'messages/private',

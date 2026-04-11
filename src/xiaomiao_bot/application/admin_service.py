@@ -631,6 +631,35 @@ class AdminService:
             )
         return sessions
 
+    def delete_message_session(
+        self,
+        *,
+        session_type: str,
+        session_id: int,
+        changed_by: str,
+    ) -> dict[str, Any]:
+        before = {
+            "session_type": session_type,
+            "session_id": session_id,
+            "registry": next(
+                (item for item in self.list_message_sessions(session_type=session_type) if int(item["session_id"]) == int(session_id)),
+                None,
+            ),
+        }
+        result = session_store.delete_session_for_admin(
+            session_type=session_type,
+            session_id=session_id,
+        )
+        self._log_config_change(
+            config_domain="message_session",
+            scope_ref=f"{session_type}:{session_id}",
+            change_type="delete",
+            before_json=before,
+            after_json=result,
+            changed_by=changed_by,
+        )
+        return result
+
     def get_message_detail(self, *, session_type: str, session_id: int, message_id: int) -> dict[str, Any]:
         row = session_store.get_message_for_admin(
             session_type=session_type,
