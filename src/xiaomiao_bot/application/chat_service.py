@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeVar
 
-from nonebot.adapters.onebot.v11 import Bot, Event
+from nonebot.adapters.onebot.v11 import Bot, Event, Message
 from nonebot.exception import FinishedException
 
 from ..adapters.onebot import MessageParser, build_at_message, enrich_reply_context
@@ -139,7 +139,10 @@ class ChatService:
         should_reply, reply_content = await self.ai_service.process_message(event, msg, user_name, is_at_me)
         if should_reply and reply_content:
             logger.info("✅ AI已生成回复，准备发送")
-            return ChatHandleResult(should_send=True, send_message=build_at_message(reply_content))
+            return ChatHandleResult(
+                should_send=True,
+                send_message=self._build_reply_message(event, reply_content),
+            )
         logger.info("ℹ️ 本次未生成可发送回复")
         return ChatHandleResult()
 
@@ -178,6 +181,12 @@ class ChatService:
         else:
             context_msg = f"[{timestamp}][{actor_name}]: {poke_text}"
 
+        if self.session_store.is_sleeping(synthetic_event):
+            self.session_store.append_user_message(synthetic_event, context_msg, is_at_bot=False)
+            logger.info("😴 当前会话处于睡眠状态，忽略拍一拍触发回复")
+            await self.ai_service.maybe_summarize_memory(synthetic_event)
+            return ChatHandleResult()
+
         if target_id != int(bot.self_id):
             self.session_store.append_user_message(synthetic_event, context_msg, is_at_bot=False)
             await self.ai_service.maybe_summarize_memory(synthetic_event)
@@ -192,8 +201,16 @@ class ChatService:
         )
         if should_reply and reply_content:
             logger.info("✅ 拍一拍触发了强制回复")
-            return ChatHandleResult(should_send=True, send_message=build_at_message(reply_content))
+            return ChatHandleResult(
+                should_send=True,
+                send_message=self._build_reply_message(synthetic_event, reply_content),
+            )
         return ChatHandleResult()
+
+    def _build_reply_message(self, event: Event, reply_content: str) -> Message:
+        if self._is_private_event(event):
+            return Message(reply_content)
+        return build_at_message(reply_content)
 
     async def _resolve_poke_name(self, bot: Bot, event: Event, qq: int) -> str:
         if qq <= 0:

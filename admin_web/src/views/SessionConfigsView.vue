@@ -256,7 +256,7 @@ const saveBlocklist = async () => {
 const openGroupDialog = (row: any) => {
   groupForm.group_id = row.group_id
   groupForm.group_name = row.group_name || ''
-  groupForm.reply_rate = Number(row.reply_rate || 100)
+  groupForm.reply_rate = Number(row.reply_rate ?? 100)
   groupForm.is_sleeping = Boolean(row.is_sleeping)
   groupForm.enable_ai = Boolean(row.enable_ai)
   groupForm.enable_summary = Boolean(row.enable_summary)
@@ -287,7 +287,7 @@ const saveGroupConfig = async () => {
 const openPrivateDialog = (row: any) => {
   privateForm.user_id = row.user_id
   privateForm.user_nickname = row.user_nickname || ''
-  privateForm.reply_rate = Number(row.reply_rate || 100)
+  privateForm.reply_rate = Number(row.reply_rate ?? 100)
   privateForm.is_sleeping = Boolean(row.is_sleeping)
   privateForm.enable_ai = Boolean(row.enable_ai)
   privateForm.enable_summary = Boolean(row.enable_summary)
