@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Awaitable, Callable
@@ -40,6 +44,62 @@ class ToolRegistry:
         "web_fetch": "网页抓取",
         "get_weather": "天气查询",
     }
+    PYTHON_TOOL_RUNNER = r"""
+import inspect
+import json
+import sys
+import traceback
+
+payload = json.loads(sys.stdin.read() or "{}")
+code = str(payload.get("code", ""))
+entry = str(payload.get("entry", "main"))
+arguments = payload.get("arguments", {})
+allow_import = bool(payload.get("allow_import", False))
+
+safe_builtins = {
+    "abs": abs,
+    "all": all,
+    "any": any,
+    "bool": bool,
+    "dict": dict,
+    "enumerate": enumerate,
+    "float": float,
+    "int": int,
+    "len": len,
+    "list": list,
+    "max": max,
+    "min": min,
+    "pow": pow,
+    "range": range,
+    "reversed": reversed,
+    "round": round,
+    "set": set,
+    "sorted": sorted,
+    "str": str,
+    "sum": sum,
+    "tuple": tuple,
+    "zip": zip,
+}
+if allow_import:
+    safe_builtins["__import__"] = __import__
+
+namespace = {
+    "__builtins__": safe_builtins,
+    "json": json,
+}
+
+try:
+    exec(code, namespace, namespace)
+    func = namespace.get(entry)
+    if not callable(func):
+        raise ValueError(f"入口函数不存在或不可调用: {entry}")
+    result = func(arguments)
+    if inspect.iscoroutine(result):
+        raise ValueError("Python 工具不支持 async 入口函数")
+    print(json.dumps({"ok": True, "result": result}, ensure_ascii=False, default=str))
+except Exception as exc:  # noqa: BLE001
+    print(json.dumps({"ok": False, "error": str(exc), "trace": traceback.format_exc(limit=2)}, ensure_ascii=False))
+"""
 
     def __init__(self, secret_service_instance: SecretService | None = None) -> None:
         self._builtin_tools: dict[str, ToolDefinition] = {}
@@ -62,6 +122,10 @@ class ToolRegistry:
                 url TEXT NULL,
                 headers_json JSON NULL,
                 body_template TEXT NULL,
+                python_code LONGTEXT NULL,
+                python_entry VARCHAR(64) NULL,
+                python_allow_network TINYINT(1) NOT NULL DEFAULT 0,
+                python_timeout_seconds INT UNSIGNED NOT NULL DEFAULT 8,
                 timeout_seconds INT UNSIGNED NOT NULL DEFAULT 15,
                 is_enabled TINYINT(1) NOT NULL DEFAULT 1,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -73,6 +137,34 @@ class ToolRegistry:
             """,
             (),
         )
+        self._ensure_python_tool_columns()
+
+    def _ensure_python_tool_columns(self) -> None:
+        # 旧版本数据库没有 python 工具字段，这里做无感补列升级。
+        column_defs: dict[str, str] = {
+            "python_code": "ADD COLUMN python_code LONGTEXT NULL AFTER body_template",
+            "python_entry": "ADD COLUMN python_entry VARCHAR(64) NULL AFTER python_code",
+            "python_allow_network": "ADD COLUMN python_allow_network TINYINT(1) NOT NULL DEFAULT 0 AFTER python_entry",
+            "python_timeout_seconds": (
+                "ADD COLUMN python_timeout_seconds INT UNSIGNED NOT NULL DEFAULT 8 "
+                "AFTER python_allow_network"
+            ),
+        }
+        for column_name, ddl in column_defs.items():
+            row = database.fetch_one(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'bot_tool_config'
+                  AND COLUMN_NAME = %s
+                """,
+                (column_name,),
+            )
+            if int((row or {}).get("cnt") or 0) > 0:
+                continue
+            database.execute(f"ALTER TABLE bot_tool_config {ddl}", ())
+            logger.info("已补齐工具表字段: %s", column_name)
 
     def _seed_builtin_rows(self) -> None:
         for definition in self._builtin_tools.values():
@@ -226,13 +318,33 @@ class ToolRegistry:
                 handler=self._make_http_handler(dict(row)),
                 tool_type="http",
             )
+
+        for row in rows.values():
+            if str(row.get("tool_type") or "") != "python":
+                continue
+            if not bool(row.get("is_enabled")):
+                continue
+            tool_name = str(row["tool_name"])
+            runtime_tools[tool_name] = ToolDefinition(
+                name=tool_name,
+                display_name=str(row.get("display_name") or tool_name),
+                description=str(row.get("description") or ""),
+                parameters=self._tool_parameters(
+                    row,
+                    {"type": "object", "properties": {}, "additionalProperties": True},
+                ),
+                handler=self._make_python_handler(dict(row)),
+                tool_type="python",
+            )
         return runtime_tools
 
     def _load_tool_rows(self) -> dict[str, dict[str, Any]]:
         rows = database.fetch_all(
             """
             SELECT id, tool_name, display_name, description, parameters_json, tool_type,
-                   method, url, headers_json, body_template, timeout_seconds, is_enabled,
+                   method, url, headers_json, body_template,
+                   python_code, python_entry, python_allow_network, python_timeout_seconds,
+                   timeout_seconds, is_enabled,
                    created_at, updated_at
             FROM bot_tool_config
             ORDER BY id ASC
@@ -258,6 +370,13 @@ class ToolRegistry:
         async def handler(arguments: dict[str, Any], event: Event) -> dict[str, Any]:
             _ = event
             return self._execute_http_tool(row, arguments)
+
+        return handler
+
+    def _make_python_handler(self, row: dict[str, Any]) -> ToolHandler:
+        async def handler(arguments: dict[str, Any], event: Event) -> dict[str, Any]:
+            _ = event
+            return await asyncio.to_thread(self._execute_python_tool, row, arguments)
 
         return handler
 
@@ -305,6 +424,62 @@ class ToolRegistry:
             "url": final_url,
             "headers": response_headers,
             "body": parsed_body,
+        }
+
+    def _execute_python_tool(self, row: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
+        code = str(row.get("python_code") or "").strip()
+        if not code:
+            raise ValueError("Python 工具未配置代码")
+        if len(code) > 60000:
+            raise ValueError("Python 工具代码过长，最大 60000 字符")
+
+        entry = str(row.get("python_entry") or "main").strip() or "main"
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", entry):
+            raise ValueError("python_entry 非法，仅允许字母数字下划线且不能数字开头")
+
+        timeout_seconds = int(row.get("python_timeout_seconds") or 8)
+        timeout_seconds = min(60, max(1, timeout_seconds))
+        allow_network = bool(row.get("python_allow_network"))
+        started_at = time.perf_counter()
+        payload = {
+            "code": code,
+            "entry": entry,
+            "arguments": arguments,
+            # 只放开 import，不直接注入网络库，依旧由代码显式导入。
+            "allow_import": allow_network,
+        }
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", "-c", self.PYTHON_TOOL_RUNNER],
+                input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"Python 工具执行超时（>{timeout_seconds}s）") from exc
+
+        stderr_text = proc.stderr.decode("utf-8", errors="ignore").strip()
+        stdout_text = proc.stdout.decode("utf-8", errors="ignore").strip()
+        if proc.returncode != 0:
+            raise ValueError(stderr_text[:300] or f"Python 子进程退出码异常: {proc.returncode}")
+        if not stdout_text:
+            raise ValueError("Python 工具无输出")
+
+        wrapper = loads_json(stdout_text, {})
+        if not isinstance(wrapper, dict):
+            raise ValueError("Python 工具输出格式非法")
+        if not bool(wrapper.get("ok")):
+            error_text = str(wrapper.get("error") or "Python 工具执行失败")
+            raise ValueError(error_text[:300])
+
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        return {
+            "entry": entry,
+            "runtime_ms": elapsed_ms,
+            "allow_network": allow_network,
+            "data": wrapper.get("result"),
         }
 
     @staticmethod

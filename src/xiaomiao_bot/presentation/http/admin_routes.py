@@ -99,6 +99,18 @@ class HttpToolCreatePayload(BaseModel):
     is_enabled: bool = True
 
 
+class PythonToolCreatePayload(BaseModel):
+    tool_name: str
+    display_name: str | None = None
+    description: str
+    parameters_json: dict[str, Any] | None = None
+    python_code: str
+    python_entry: str = "main"
+    python_allow_network: bool = False
+    python_timeout_seconds: int = Field(default=8, ge=1, le=60)
+    is_enabled: bool = True
+
+
 class ScheduledTaskCreatePayload(BaseModel):
     name: str
     description: str | None = None
@@ -134,6 +146,10 @@ class ToolUpdatePayload(BaseModel):
     headers_json: dict[str, Any] | None = None
     body_template: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=1, le=300)
+    python_code: str | None = None
+    python_entry: str | None = None
+    python_allow_network: bool | None = None
+    python_timeout_seconds: int | None = Field(default=None, ge=1, le=60)
     is_enabled: bool | None = None
 
 
@@ -496,6 +512,22 @@ async def create_http_tool(
     admin = _get_current_admin(request, x_admin_token)
     try:
         return get_container().admin_service.create_http_tool(
+            _model_dump(payload),
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/tools/python")
+async def create_python_tool(
+    payload: PythonToolCreatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.create_python_tool(
             _model_dump(payload),
             changed_by=_changed_by(admin),
         )

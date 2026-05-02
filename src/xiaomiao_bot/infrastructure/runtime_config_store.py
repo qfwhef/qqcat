@@ -296,7 +296,7 @@ class RuntimeConfigStore:
                 enable_summary_memory, summary_only_group, summary_trigger_rounds,
                 summary_keep_recent_messages, summary_cooldown_seconds, summary_min_new_messages, default_reply_rate,
                 max_history, log_level, is_active, version
-            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)
             """,
             (
                 payload["config_scope"],

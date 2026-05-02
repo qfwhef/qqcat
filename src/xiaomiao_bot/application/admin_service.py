@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -228,7 +229,9 @@ class AdminService:
             """
             SELECT
                 id, tool_name, display_name, description, parameters_json, tool_type,
-                method, url, headers_json, body_template, timeout_seconds, is_enabled,
+                method, url, headers_json, body_template,
+                python_code, python_entry, python_allow_network, python_timeout_seconds,
+                timeout_seconds, is_enabled,
                 created_at, updated_at
             FROM bot_tool_config
             ORDER BY tool_type ASC, tool_name ASC
@@ -363,13 +366,72 @@ class AdminService:
         )
         return after or {}
 
+    def create_python_tool(self, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
+        tool_name = str(payload.get("tool_name") or "").strip()
+        if not tool_name:
+            raise ValueError("tool_name 不能为空")
+        if self._find_tool_config(tool_name):
+            raise ValueError("工具名已存在")
+        python_code = str(payload.get("python_code") or "").strip()
+        if not python_code:
+            raise ValueError("python_code 不能为空")
+        if len(python_code) > 60000:
+            raise ValueError("python_code 过长，最大 60000 字符")
+        python_entry = str(payload.get("python_entry") or "main").strip() or "main"
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", python_entry):
+            raise ValueError("python_entry 非法，仅允许字母数字下划线且不能数字开头")
+
+        parameters_json = payload.get("parameters_json") or {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        }
+        database.execute(
+            """
+            INSERT INTO bot_tool_config(
+                tool_name, display_name, description, parameters_json, tool_type,
+                python_code, python_entry, python_allow_network, python_timeout_seconds, is_enabled
+            ) VALUES(%s, %s, %s, %s, 'python', %s, %s, %s, %s, %s)
+            """,
+            (
+                tool_name,
+                payload.get("display_name") or tool_name,
+                payload.get("description") or "",
+                dumps_json(parameters_json),
+                python_code,
+                python_entry,
+                1 if bool(payload.get("python_allow_network", False)) else 0,
+                min(60, max(1, int(payload.get("python_timeout_seconds") or 8))),
+                1 if bool(payload.get("is_enabled", True)) else 0,
+            ),
+        )
+        after = self._find_tool_config(tool_name)
+        self._log_config_change(
+            config_domain="tool",
+            scope_ref=tool_name,
+            change_type="create",
+            before_json=None,
+            after_json=after,
+            changed_by=changed_by,
+        )
+        return after or {}
+
     def update_tool(self, tool_name: str, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
         before = self._find_tool_config(tool_name)
         if not before:
             raise ValueError("工具不存在")
         updates: list[str] = []
         params: list[Any] = []
-        allowed_plain_fields = ["display_name", "description", "method", "url", "body_template", "timeout_seconds"]
+        allowed_plain_fields = [
+            "display_name",
+            "description",
+            "method",
+            "url",
+            "body_template",
+            "timeout_seconds",
+            "python_entry",
+            "python_timeout_seconds",
+        ]
         for field in allowed_plain_fields:
             if field not in payload:
                 continue
@@ -378,11 +440,26 @@ class AdminService:
                 value = str(value).upper()
             if field == "timeout_seconds" and value is not None:
                 value = int(value)
+            if field == "python_timeout_seconds" and value is not None:
+                value = min(60, max(1, int(value)))
+            if field == "python_entry" and value is not None:
+                value = str(value).strip() or "main"
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", value):
+                    raise ValueError("python_entry 非法，仅允许字母数字下划线且不能数字开头")
             updates.append(f"{field}=%s")
             params.append(value)
         if "is_enabled" in payload:
             updates.append("is_enabled=%s")
             params.append(1 if bool(payload["is_enabled"]) else 0)
+        if "python_allow_network" in payload:
+            updates.append("python_allow_network=%s")
+            params.append(1 if bool(payload["python_allow_network"]) else 0)
+        if "python_code" in payload:
+            raw_code = str(payload["python_code"] or "")
+            if raw_code and len(raw_code) > 60000:
+                raise ValueError("python_code 过长，最大 60000 字符")
+            updates.append("python_code=%s")
+            params.append(raw_code or None)
         if "parameters_json" in payload:
             updates.append("parameters_json=%s")
             params.append(dumps_json(payload["parameters_json"]) if payload["parameters_json"] is not None else None)

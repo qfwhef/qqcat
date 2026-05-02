@@ -111,6 +111,10 @@ class Settings:
     minecraft_notify_group: int = int(os.getenv("MINECRAFT_NOTIFY_GROUP", "0"))
 
     max_history: int = 100
+    image_cache_dir: str = os.getenv("IMAGE_CACHE_DIR", ".cache/qq_images")
+    image_cache_ttl_seconds: int = int(os.getenv("IMAGE_CACHE_TTL_SECONDS", "86400"))
+    image_cache_max_bytes: int = int(os.getenv("IMAGE_CACHE_MAX_BYTES", str(2 * 1024 * 1024)))
+    image_download_timeout_seconds: int = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT_SECONDS", "12"))
 
     @property
     def openai_client(self) -> AsyncOpenAI:

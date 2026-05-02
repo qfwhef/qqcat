@@ -64,6 +64,9 @@ export const adminApi = {
   createHttpTool(payload: Record<string, unknown>) {
     return http.post('/tools/http', payload).then((res) => res.data)
   },
+  createPythonTool(payload: Record<string, unknown>) {
+    return http.post('/tools/python', payload).then((res) => res.data)
+  },
   updateTool(toolName: string, payload: Record<string, unknown>) {
     return http.put(`/tools/${toolName}`, payload).then((res) => res.data)
   },

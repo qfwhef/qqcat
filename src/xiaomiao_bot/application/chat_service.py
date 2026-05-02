@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TypeVar
 
 from nonebot.adapters.onebot.v11 import Bot, Event
 from nonebot.exception import FinishedException
@@ -18,6 +21,7 @@ from .ai_service import AIService
 from .command_service import CommandService
 
 logger = get_logger("聊天服务")
+_T = TypeVar("_T")
 
 
 @dataclass(slots=True)
@@ -59,6 +63,34 @@ class ChatService:
         self.session_store = session_store
         self.command_service = command_service
         self.ai_service = ai_service
+        self._session_queue_locks: dict[str, asyncio.Lock] = {}
+
+    def should_queue_event(self, bot: Bot, event: Event) -> bool:
+        """需要机器人主动回复的事件进入同会话等待队列。"""
+        if self._is_private_event(event):
+            return True
+        return self.parser.check_at_bot(bot, event)
+
+    def should_queue_poke_event(self, bot: Bot, event: Event) -> bool:
+        """拍机器人本体会触发回复，也需要与普通 @ 回复串行。"""
+        if (
+            getattr(event, "notice_type", "") != "notify"
+            or getattr(event, "sub_type", "") != "poke"
+        ):
+            return False
+        return int(getattr(event, "target_id", 0) or 0) == int(bot.self_id)
+
+    async def run_in_session_queue(self, event: Event, action: Callable[[], Awaitable[_T]]) -> _T:
+        scope = self.session_store.get_scope(event)
+        queue_key = f"{scope.session_type}:{scope.session_id}"
+        lock = self._session_queue_locks.setdefault(queue_key, asyncio.Lock())
+        if lock.locked():
+            logger.info("⏳ 会话回复队列等待中: session=%s", queue_key)
+        async with lock:
+            logger.info("▶️ 会话回复队列开始处理: session=%s", queue_key)
+            result = await action()
+            logger.info("✅ 会话回复队列处理完成: session=%s", queue_key)
+            return result
 
     async def handle_event(self, bot: Bot, event: Event) -> ChatHandleResult:
         is_at_me = self.parser.check_at_bot(bot, event)
@@ -110,6 +142,10 @@ class ChatService:
             return ChatHandleResult(should_send=True, send_message=build_at_message(reply_content))
         logger.info("ℹ️ 本次未生成可发送回复")
         return ChatHandleResult()
+
+    @staticmethod
+    def _is_private_event(event: Event) -> bool:
+        return getattr(event, "group_id", None) in {None, ""}
 
     async def handle_poke_event(self, bot: Bot, event: Event) -> ChatHandleResult:
         if getattr(event, "notice_type", "") != "notify" or getattr(event, "sub_type", "") != "poke":

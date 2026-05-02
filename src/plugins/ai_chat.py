@@ -14,23 +14,35 @@ poke = on_notice(rule=permission_checker, priority=99, block=False)
 
 @chat.handle()
 async def handle_chat(bot: Bot, event: Event) -> None:
-    try:
+    async def process_and_send() -> None:
         result = await container.chat_service.handle_event(bot, event)
         if result.should_finish:
             await chat.finish(result.finish_text)
         if result.should_send and result.send_message is not None:
             await chat.send(result.send_message)
+
+    try:
+        if container.chat_service.should_queue_event(bot, event):
+            await container.chat_service.run_in_session_queue(event, process_and_send)
+        else:
+            await process_and_send()
     except FinishedException:
         raise
 
 
 @poke.handle()
 async def handle_poke(bot: Bot, event: Event) -> None:
-    try:
+    async def process_and_send() -> None:
         result = await container.chat_service.handle_poke_event(bot, event)
         if result.should_finish:
             await poke.finish(result.finish_text)
         if result.should_send and result.send_message is not None:
             await poke.send(result.send_message)
+
+    try:
+        if container.chat_service.should_queue_poke_event(bot, event):
+            await container.chat_service.run_in_session_queue(event, process_and_send)
+        else:
+            await process_and_send()
     except FinishedException:
         raise
