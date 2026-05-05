@@ -17,6 +17,7 @@ const router = createRouter({
       redirect: '/overview',
       children: [
         { path: 'overview', name: 'overview', component: () => import('../views/OverviewView.vue') },
+        { path: 'health', name: 'health', component: () => import('../views/HealthView.vue') },
         {
           path: 'scheduled-tasks',
           name: 'scheduled-tasks',

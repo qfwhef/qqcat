@@ -21,6 +21,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 ADMIN_MENUS = [
     {"key": "overview", "label": "概览", "path": "/admin-ui/overview"},
+    {"key": "health", "label": "系统检测", "path": "/admin-ui/health"},
     {"key": "runtime", "label": "AI 运行配置", "path": "/admin-ui/runtime"},
     {"key": "tools", "label": "工具管理", "path": "/admin-ui/tools"},
     {"key": "scheduled-tasks", "label": "定时任务", "path": "/admin-ui/scheduled-tasks"},
@@ -59,6 +60,12 @@ class RuntimeConfigPayload(BaseModel):
     minecraft_notify_groups: list[int] | None = None
     max_history: int | None = Field(default=None, ge=1, le=500)
     log_level: str | None = None
+
+
+class RuntimeTestPayload(BaseModel):
+    ai_base_url: str | None = None
+    text_model: str | None = None
+    enable_tools: bool | None = None
 
 
 class BlocklistPayload(BaseModel):
@@ -323,6 +330,24 @@ async def get_overview(
     return get_container().admin_service.get_overview()
 
 
+@router.get("/health")
+async def get_health(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    return await get_container().admin_service.get_health(run_ai_check=False)
+
+
+@router.post("/health/check")
+async def check_health(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    return await get_container().admin_service.get_health(run_ai_check=True)
+
+
 @router.get("/runtime-config")
 async def get_runtime_config(
     request: Request,
@@ -343,6 +368,16 @@ async def update_runtime_config(
         _model_dump(payload),
         changed_by=_changed_by(admin),
     )
+
+
+@router.post("/runtime-config/test-ai")
+async def test_runtime_ai(
+    payload: RuntimeTestPayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    return await get_container().admin_service.test_ai_connection(_model_dump(payload))
 
 
 @router.get("/prompts")

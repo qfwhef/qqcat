@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Any
+
+from nonebot import get_bots
+from openai import AsyncOpenAI
 
 from ..application.admin_auth_service import AdminAuthService
 from ..application.minecraft_service import MinecraftService
@@ -130,6 +134,217 @@ class AdminService:
             changed_by=changed_by,
         )
         return after
+
+    async def test_ai_connection(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        runtime = self.runtime_config_store.get_runtime_snapshot()
+        base_url = str(payload.get("ai_base_url") or runtime.get("ai_base_url") or "").strip()
+        model = str(payload.get("text_model") or runtime.get("text_model") or "").strip()
+        enable_tools = bool(payload.get("enable_tools", runtime.get("enable_tools", False)))
+        api_key = self.secret_service.get_secret("AI_API_KEY", "")
+        if not base_url:
+            return {"ok": False, "message": "AI Base URL 未配置"}
+        if not model:
+            return {"ok": False, "message": "文本模型未配置", "base_url": base_url}
+        if not api_key:
+            return {"ok": False, "message": "AI_API_KEY 未配置", "base_url": base_url, "model": model}
+
+        started_at = time.perf_counter()
+        result: dict[str, Any] = {
+            "ok": False,
+            "base_url": base_url,
+            "model": model,
+            "tools_enabled": enable_tools,
+            "tools_supported": None,
+        }
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=20)
+        messages = [
+            {"role": "system", "content": "你是连接测试助手，只回复 OK。"},
+            {"role": "user", "content": "连接测试，请只回复 OK。"},
+        ]
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=32,
+            )
+            content = str(response.choices[0].message.content or "").strip()
+            result.update(
+                {
+                    "ok": bool(content),
+                    "message": "模型连接正常" if content else "模型返回为空",
+                    "sample": content[:80],
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            result.update(
+                {
+                    "ok": False,
+                    "message": "模型连接失败",
+                    "error": self._public_error(exc),
+                    "latency_ms": int((time.perf_counter() - started_at) * 1000),
+                }
+            )
+            return result
+
+        if enable_tools:
+            tool_started_at = time.perf_counter()
+            try:
+                await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=32,
+                    tools=[
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "health_echo",
+                                "description": "后台健康检查用的空工具。",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": False,
+                                },
+                            },
+                        }
+                    ],
+                    tool_choice="auto",
+                )
+                result["tools_supported"] = True
+                result["tools_message"] = "工具参数可用"
+            except Exception as exc:  # noqa: BLE001
+                result["tools_supported"] = False
+                result["tools_message"] = self._public_error(exc)
+            result["tools_latency_ms"] = int((time.perf_counter() - tool_started_at) * 1000)
+
+        result["latency_ms"] = int((time.perf_counter() - started_at) * 1000)
+        return result
+
+    async def get_health(self, *, run_ai_check: bool = False) -> dict[str, Any]:
+        runtime = self.runtime_config_store.get_runtime_snapshot()
+        now = datetime.now()
+        checks: list[dict[str, Any]] = []
+
+        db_started_at = time.perf_counter()
+        db_ok = False
+        db_message = "数据库异常"
+        try:
+            row = database.fetch_one("SELECT 1 AS ok", ())
+            db_ok = int((row or {}).get("ok") or 0) == 1
+            db_message = "MySQL 正常" if db_ok else "MySQL 返回异常"
+        except Exception as exc:  # noqa: BLE001
+            db_message = self._public_error(exc)
+        checks.append(
+            {
+                "key": "mysql",
+                "label": "MySQL",
+                "ok": db_ok,
+                "status": "normal" if db_ok else "error",
+                "message": db_message,
+                "latency_ms": int((time.perf_counter() - db_started_at) * 1000),
+            }
+        )
+
+        bots = get_bots()
+        onebot_ok = bool(bots)
+        checks.append(
+            {
+                "key": "onebot",
+                "label": "OneBot / NapCat",
+                "ok": onebot_ok,
+                "status": "normal" if onebot_ok else "warning",
+                "message": f"已连接 {len(bots)} 个 Bot" if onebot_ok else "当前没有 OneBot 连接",
+            }
+        )
+
+        tools_enabled = bool(runtime.get("enable_tools"))
+        checks.append(
+            {
+                "key": "tools",
+                "label": "工具调用",
+                "ok": tools_enabled,
+                "status": "normal" if tools_enabled else "warning",
+                "message": "工具总开关已开启" if tools_enabled else "工具总开关已关闭",
+            }
+        )
+
+        ai_result: dict[str, Any] | None = None
+        if run_ai_check:
+            ai_result = await self.test_ai_connection({})
+            checks.append(
+                {
+                    "key": "ai",
+                    "label": "AI 模型",
+                    "ok": bool(ai_result.get("ok")),
+                    "status": "normal" if ai_result.get("ok") else "error",
+                    "message": ai_result.get("message") or "-",
+                    "latency_ms": ai_result.get("latency_ms"),
+                    "detail": {
+                        key: value
+                        for key, value in ai_result.items()
+                        if key not in {"base_url", "model"}
+                    },
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "key": "ai",
+                    "label": "AI 模型",
+                    "ok": None,
+                    "status": "unknown",
+                    "message": "点击一键检测后实时测试",
+                }
+            )
+
+        failed_10m = self._count(
+            """
+            SELECT COUNT(*) AS total
+            FROM bot_ai_call_log
+            WHERE is_success=0
+              AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+            """,
+            (),
+        )
+        checks.append(
+            {
+                "key": "ai_failures",
+                "label": "近期 AI 失败",
+                "ok": failed_10m == 0,
+                "status": "normal" if failed_10m == 0 else ("warning" if failed_10m < 5 else "error"),
+                "message": f"最近 10 分钟失败 {failed_10m} 次",
+            }
+        )
+        last_success = database.fetch_one(
+            """
+            SELECT stage, model_name, latency_ms, created_at
+            FROM bot_ai_call_log
+            WHERE is_success=1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (),
+        )
+        return {
+            "checked_at": now,
+            "overall_status": "normal"
+            if all(item.get("status") != "error" for item in checks)
+            else "error",
+            "checks": checks,
+            "runtime": {
+                "ai_base_url": runtime.get("ai_base_url"),
+                "text_model": runtime.get("text_model"),
+                "vision_model": runtime.get("vision_model"),
+                "enable_tools": bool(runtime.get("enable_tools")),
+                "enable_summary_memory": bool(runtime.get("enable_summary_memory")),
+            },
+            "metrics": {
+                "ai_failures_10m": failed_10m,
+                "bot_connections": len(bots),
+                "last_success_ai_call": last_success,
+            },
+            "ai_test": ai_result,
+        }
 
     def get_prompts(self) -> dict[str, Any]:
         return {
@@ -1202,6 +1417,12 @@ class AdminService:
     def _count(self, sql: str, params: tuple[Any, ...]) -> int:
         row = database.fetch_one(sql, params)
         return int(row["total"] or 0) if row else 0
+
+    @staticmethod
+    def _public_error(exc: Exception) -> str:
+        text = str(exc).strip() or exc.__class__.__name__
+        text = re.sub(r"sk-[A-Za-z0-9_-]+", "sk-***", text)
+        return text[:500]
 
     def _log_config_change(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -22,6 +23,10 @@ from .command_service import CommandService
 
 logger = get_logger("聊天服务")
 _T = TypeVar("_T")
+_QUEUE_LATEST_CHECKER: contextvars.ContextVar[Callable[[], bool] | None] = contextvars.ContextVar(
+    "queue_latest_checker",
+    default=None,
+)
 
 
 @dataclass(slots=True)
@@ -64,6 +69,9 @@ class ChatService:
         self.command_service = command_service
         self.ai_service = ai_service
         self._session_queue_locks: dict[str, asyncio.Lock] = {}
+        self._session_latest_tokens: dict[str, int] = {}
+        self._session_token_counter = 0
+        self._session_token_lock = asyncio.Lock()
 
     def should_queue_event(self, bot: Bot, event: Event) -> bool:
         """需要机器人主动回复的事件进入同会话等待队列。"""
@@ -80,17 +88,73 @@ class ChatService:
             return False
         return int(getattr(event, "target_id", 0) or 0) == int(bot.self_id)
 
-    async def run_in_session_queue(self, event: Event, action: Callable[[], Awaitable[_T]]) -> _T:
+    async def is_command_event(self, bot: Bot, event: Event) -> bool:
+        _ = bot
+        msg = await self.parser.parse_message(bot, event)
+        return msg.startswith("/") and bool(msg[1:].split())
+
+    async def run_in_session_queue(
+        self,
+        event: Event,
+        action: Callable[[], Awaitable[_T]],
+        *,
+        coalesce: bool = True,
+        debounce_seconds: float = 1.2,
+        stale_result_factory: Callable[[], _T] | None = None,
+    ) -> _T:
         scope = self.session_store.get_scope(event)
         queue_key = f"{scope.session_type}:{scope.session_id}"
+        token = await self._mark_latest_queue_token(queue_key) if coalesce else 0
+        if coalesce and debounce_seconds > 0:
+            await asyncio.sleep(debounce_seconds)
+            if not self._is_latest_queue_token(queue_key, token):
+                logger.info("⏭️ 会话回复已被更新触发覆盖，跳过旧请求: session=%s", queue_key)
+                return self._stale_result(stale_result_factory)
+
         lock = self._session_queue_locks.setdefault(queue_key, asyncio.Lock())
         if lock.locked():
             logger.info("⏳ 会话回复队列等待中: session=%s", queue_key)
         async with lock:
+            if coalesce and not self._is_latest_queue_token(queue_key, token):
+                logger.info("⏭️ 会话回复排队期间被新触发覆盖: session=%s", queue_key)
+                return self._stale_result(stale_result_factory)
             logger.info("▶️ 会话回复队列开始处理: session=%s", queue_key)
-            result = await action()
+            checker_token = (
+                _QUEUE_LATEST_CHECKER.set(lambda: self._is_latest_queue_token(queue_key, token))
+                if coalesce
+                else None
+            )
+            try:
+                result = await action()
+            finally:
+                if checker_token is not None:
+                    _QUEUE_LATEST_CHECKER.reset(checker_token)
+            if coalesce and not self._is_latest_queue_token(queue_key, token):
+                logger.info("⏭️ AI已生成但不是最新触发，取消发送旧回复: session=%s", queue_key)
+                return self._stale_result(stale_result_factory)
             logger.info("✅ 会话回复队列处理完成: session=%s", queue_key)
             return result
+
+    async def _mark_latest_queue_token(self, queue_key: str) -> int:
+        async with self._session_token_lock:
+            self._session_token_counter += 1
+            token = self._session_token_counter
+            self._session_latest_tokens[queue_key] = token
+            return token
+
+    def _is_latest_queue_token(self, queue_key: str, token: int) -> bool:
+        return self._session_latest_tokens.get(queue_key) == token
+
+    @staticmethod
+    def _stale_result(stale_result_factory: Callable[[], _T] | None) -> _T:
+        if stale_result_factory is None:
+            raise RuntimeError("stale_result_factory is required when coalescing queued actions")
+        return stale_result_factory()
+
+    @staticmethod
+    def _current_queue_is_latest() -> bool:
+        checker = _QUEUE_LATEST_CHECKER.get()
+        return checker() if checker is not None else True
 
     async def handle_event(self, bot: Bot, event: Event) -> ChatHandleResult:
         is_at_me = self.parser.check_at_bot(bot, event)
@@ -136,7 +200,13 @@ class ChatService:
                 await self.ai_service.maybe_summarize_memory(event)
                 return ChatHandleResult()
 
-        should_reply, reply_content = await self.ai_service.process_message(event, msg, user_name, is_at_me)
+        should_reply, reply_content = await self.ai_service.process_message(
+            event,
+            msg,
+            user_name,
+            is_at_me,
+            should_continue=self._current_queue_is_latest,
+        )
         if should_reply and reply_content:
             logger.info("✅ AI已生成回复，准备发送")
             return ChatHandleResult(
@@ -198,6 +268,7 @@ class ChatService:
             actor_name,
             False,
             is_poke=True,
+            should_continue=self._current_queue_is_latest,
         )
         if should_reply and reply_content:
             logger.info("✅ 拍一拍触发了强制回复")

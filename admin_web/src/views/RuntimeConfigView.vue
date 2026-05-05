@@ -10,6 +10,7 @@
       </div>
       <div class="runtime-actions">
         <el-button :loading="loading" @click="loadData">刷新</el-button>
+        <el-button :loading="testingAi" @click="testAiConnection">测试连接</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
       </div>
     </div>
@@ -69,6 +70,14 @@
             <div class="banner-status" :class="{ active: !!form.ai_base_url.trim() }">
               <i class="state-dot" />
               <span>{{ form.ai_base_url.trim() ? "连接地址已配置" : "待配置连接地址" }}</span>
+            </div>
+            <div v-if="aiTestResult" class="test-result" :class="{ ok: aiTestResult.ok }">
+              <strong>{{ aiTestResult.ok ? "连接正常" : "连接失败" }}</strong>
+              <span>{{ aiTestResult.message || aiTestResult.error || "-" }}</span>
+              <small v-if="aiTestResult.latency_ms">耗时 {{ aiTestResult.latency_ms }} ms</small>
+              <small v-if="aiTestResult.tools_supported !== null && aiTestResult.tools_supported !== undefined">
+                工具参数：{{ aiTestResult.tools_supported ? "可用" : "不可用" }}
+              </small>
             </div>
           </div>
           <el-form-item label="AI Base URL" class="connection-form-item">
@@ -203,10 +212,12 @@ import { adminApi } from '../api/admin'
 
 const loading = ref(false)
 const saving = ref(false)
+const testingAi = ref(false)
 const textFallbackRaw = ref('')
 const visionFallbackRaw = ref('')
 const minecraftNotifyGroupsRaw = ref('')
 const lastUpdatedAt = ref<Date | null>(null)
+const aiTestResult = ref<any | null>(null)
 
 const form = reactive({
   ai_base_url: '',
@@ -291,6 +302,24 @@ const save = async () => {
     await loadData()
   } finally {
     saving.value = false
+  }
+}
+
+const testAiConnection = async () => {
+  testingAi.value = true
+  try {
+    aiTestResult.value = await adminApi.testRuntimeAi({
+      ai_base_url: form.ai_base_url,
+      text_model: form.text_model,
+      enable_tools: form.enable_tools,
+    })
+    if (aiTestResult.value?.ok) {
+      ElMessage.success('模型连接正常')
+    } else {
+      ElMessage.warning(aiTestResult.value?.message || '模型连接失败')
+    }
+  } finally {
+    testingAi.value = false
   }
 }
 
@@ -472,6 +501,38 @@ onMounted(loadData)
   color: #166534;
   background: rgba(22, 163, 74, 0.1);
   border-color: rgba(22, 163, 74, 0.3);
+}
+
+.test-result {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(244, 63, 94, 0.24);
+  background: rgba(244, 63, 94, 0.07);
+  color: #9f1239;
+  font-size: 12px;
+}
+
+.test-result.ok {
+  border-color: rgba(22, 163, 74, 0.28);
+  background: rgba(22, 163, 74, 0.08);
+  color: #166534;
+}
+
+.test-result strong {
+  color: inherit;
+}
+
+.test-result span {
+  color: #334155;
+}
+
+.test-result small {
+  color: #64748b;
 }
 
 .model-grid {

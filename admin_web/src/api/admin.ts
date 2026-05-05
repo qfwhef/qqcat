@@ -25,6 +25,12 @@ export const adminApi = {
   getOverview() {
     return http.get('/overview').then((res) => res.data)
   },
+  getHealth() {
+    return http.get('/health').then((res) => res.data)
+  },
+  checkHealth() {
+    return http.post('/health/check').then((res) => res.data)
+  },
   getScheduledTasks(params: Record<string, unknown>) {
     return http.get<PagedResult>('/scheduled-tasks', { params: cleanParams(params) }).then((res) => res.data)
   },
@@ -45,6 +51,9 @@ export const adminApi = {
   },
   updateRuntimeConfig(payload: Record<string, unknown>) {
     return http.put('/runtime-config', payload).then((res) => res.data)
+  },
+  testRuntimeAi(payload: Record<string, unknown>) {
+    return http.post('/runtime-config/test-ai', payload).then((res) => res.data)
   },
   getPrompts() {
     return http.get('/prompts').then((res) => res.data)

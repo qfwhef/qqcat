@@ -107,6 +107,7 @@ import {
   Bell,
   Brush,
   DataAnalysis,
+  Monitor,
   Lock,
   MessageBox,
   Operation,
@@ -151,6 +152,7 @@ const sessionMenuChildren = (type: "group" | "private") => {
 
 const fallbackMenus: MenuNode[] = [
   { key: "overview", label: "概览", path: "/overview" },
+  { key: "health", label: "系统检测", path: "/health" },
   { key: "scheduled-tasks", label: "定时任务", path: "/scheduled-tasks" },
   { key: "runtime", label: "AI 运行配置", path: "/runtime" },
   { key: "tools", label: "工具管理", path: "/tools" },
@@ -230,6 +232,7 @@ const defaultOpeneds = computed(() => {
 const menuIcon = (key: string) => {
   const normalized = String(key || "");
   if (normalized === "overview") return DataAnalysis;
+  if (normalized === "health") return Monitor;
   if (normalized === "runtime") return SetUp;
   if (normalized === "tools") return Tools;
   if (normalized === "scheduled-tasks") return Timer;

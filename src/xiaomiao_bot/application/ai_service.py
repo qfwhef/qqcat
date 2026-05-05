@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -327,6 +327,7 @@ class AIService:
         user_name: str,
         is_at_me: bool,
         is_poke: bool = False,
+        should_continue: Callable[[], bool] | None = None,
     ) -> tuple[bool, str]:
         is_private = self._is_private_event(event)
         history = self.session_store.get_history(event)
@@ -384,18 +385,56 @@ class AIService:
                     request_excerpt=context_msg[:500],
                 )
             except Exception as exc:
-                response, active_model, allow_tools = await self._retry_with_fallback(
-                    event,
-                    request_messages,
-                    prepared_image_urls,
-                    use_model,
-                    allow_tools,
-                    exc,
-                    message_row_id=user_message_row_id,
-                    request_excerpt=context_msg[:500],
-                )
+                if self._is_provider_blocked(exc):
+                    logger.warning("上游拦截完整上下文，尝试简化请求: model=%s", use_model)
+                    compact_messages = self._build_compact_messages(context_msg, prepared_image_urls)
+                    try:
+                        response = await self._create_completion_with_audit(
+                            event,
+                            compact_messages,
+                            stage="chat-compact",
+                            model=use_model,
+                            allow_tools=False,
+                            fallback_index=0,
+                            message_row_id=user_message_row_id,
+                            request_excerpt=context_msg[:500],
+                        )
+                        request_messages = compact_messages
+                        active_model = use_model
+                        allow_tools = False
+                    except Exception as compact_exc:
+                        logger.warning(
+                            "简化请求失败，继续执行模型回滚: model=%s reason=%s detail=%s",
+                            use_model,
+                            self._classify_failure(compact_exc),
+                            compact_exc,
+                        )
+                        response, active_model, allow_tools = await self._retry_with_fallback(
+                            event,
+                            request_messages,
+                            prepared_image_urls,
+                            use_model,
+                            allow_tools,
+                            exc,
+                            message_row_id=user_message_row_id,
+                            request_excerpt=context_msg[:500],
+                        )
+                else:
+                    response, active_model, allow_tools = await self._retry_with_fallback(
+                        event,
+                        request_messages,
+                        prepared_image_urls,
+                        use_model,
+                        allow_tools,
+                        exc,
+                        message_row_id=user_message_row_id,
+                        request_excerpt=context_msg[:500],
+                    )
 
             for _ in range(2):
+                if should_continue is not None and not should_continue():
+                    logger.info("会话触发已更新，放弃旧AI回复后续处理")
+                    return False, ""
                 executed = await self._run_tool_calls(response, request_messages, event)
                 if not executed:
                     break
@@ -423,6 +462,9 @@ class AIService:
                     )
 
             reply_content = self._extract_content(response.choices[0].message)
+            if should_continue is not None and not should_continue():
+                logger.info("会话触发已更新，放弃旧AI回复写入和发送")
+                return False, ""
             if not reply_content or self._is_orchestration_leak(reply_content):
                 retry_reason = (
                     InvalidModelResponseError("chat model leaked orchestration text")
@@ -440,6 +482,9 @@ class AIService:
                     request_excerpt=context_msg[:500],
                 )
                 reply_content = self._extract_content(response.choices[0].message)
+                if should_continue is not None and not should_continue():
+                    logger.info("会话触发已更新，放弃旧AI回滚回复写入和发送")
+                    return False, ""
                 if not reply_content or self._is_orchestration_leak(reply_content):
                     request_messages.append(
                         {
@@ -462,6 +507,9 @@ class AIService:
                         request_excerpt=context_msg[:500],
                     )
                     reply_content = self._extract_content(fallback_response.choices[0].message)
+                    if should_continue is not None and not should_continue():
+                        logger.info("会话触发已更新，放弃旧AI最终回复写入和发送")
+                        return False, ""
                     if not reply_content or self._is_orchestration_leak(reply_content):
                         logger.warning("模型回复仍包含异常编排内容，已放弃发送")
                         return False, ""
@@ -485,6 +533,9 @@ class AIService:
                 else:
                     reply_content = f"工具调用失败：{tool_result.get('error', 'unknown error')}"
 
+            if should_continue is not None and not should_continue():
+                logger.info("会话触发已更新，放弃旧AI工具结果写入和发送")
+                return False, ""
             self.session_store.append_assistant_message(
                 event,
                 reply_content,
@@ -671,6 +722,11 @@ class AIService:
         for url in image_urls:
             blocks.append({"type": "image_url", "image_url": {"url": url}})
         return blocks
+
+    def _build_compact_messages(
+        self, context_msg: str, image_urls: list[str]
+    ) -> list[dict[str, Any]]:
+        return [{"role": "user", "content": self._build_user_content(context_msg, image_urls)}]
 
     async def _prepare_image_inputs(self, image_urls: list[str]) -> list[str]:
         if not image_urls:
@@ -1002,6 +1058,10 @@ class AIService:
         if any(token in err_text for token in ("tools", "tool_choice", "function call", "function_call")):
             return "tools_unsupported"
         return "other"
+
+    @staticmethod
+    def _is_provider_blocked(exc: Exception) -> bool:
+        return "your request was blocked" in str(exc).lower()
 
     @staticmethod
     def _log_active_model(stage: str, model: str, *, allow_tools: bool, fallback_index: int) -> None:

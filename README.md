@@ -15,6 +15,7 @@ NapCat(Docker) -> OneBot WebSocket -> NoneBot(Python虚拟环境) -> 管理后�
 ## 这个项目现在能做什么
 
 - QQ 群聊 / 私聊 AI 对话
+- 连续触发防抖：连续 @、私聊、拍一拍时只回复最后一次触发
 - 聊天记忆和摘要压缩
 - 图片识别与图片描述
 - 工具调用
@@ -22,7 +23,9 @@ NapCat(Docker) -> OneBot WebSocket -> NoneBot(Python虚拟环境) -> 管理后�
   - 后台新增 HTTP 工具
   - 单工具启停
 - 管理后台
+  - 系统检测：检查 MySQL、NapCat / OneBot、AI 模型、工具调用和近期失败次数
   - 运行配置热更新
+  - AI 连接测试：直接验证 Base URL、密钥、模型和工具参数兼容性
   - 提示词管理
   - 会话配置
   - 消息查询
