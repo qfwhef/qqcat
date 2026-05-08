@@ -339,7 +339,7 @@ except Exception as exc:  # noqa: BLE001
     def register(self, definition: ToolDefinition) -> None:
         self._builtin_tools[definition.name] = definition
 
-    def get_openai_tools(self) -> list[dict[str, Any]]:
+    def get_openai_tools(self, allowed_tool_names: set[str] | None = None) -> list[dict[str, Any]]:
         return [
             {
                 "type": "function",
@@ -350,7 +350,15 @@ except Exception as exc:  # noqa: BLE001
                 },
             }
             for definition in self._get_runtime_tools().values()
+            if allowed_tool_names is None or definition.name in allowed_tool_names
         ]
+
+    def get_runtime_tool_names(self, tool_type: str | None = None) -> set[str]:
+        return {
+            definition.name
+            for definition in self._get_runtime_tools().values()
+            if tool_type is None or definition.tool_type == tool_type
+        }
 
     async def execute(self, tool_name: str, arguments_json: str | None, event: Event) -> dict[str, Any]:
         definition = self._get_runtime_tools().get(tool_name)

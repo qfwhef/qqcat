@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from nonebot.adapters.onebot.v11 import Event, GroupMessageEvent, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import Event, GroupMessageEvent
 from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
 from ..adapters.onebot import MessageParser
@@ -172,6 +172,56 @@ class AIService:
             if name:
                 lines.append(f"- {name}: {description}")
         return "\n".join(lines) if lines else "无可用工具"
+
+    def format_allowed_tool_list(self, allowed_tool_names: set[str] | None) -> str:
+        lines: list[str] = []
+        for tool in self.tools.get_openai_tools(allowed_tool_names=allowed_tool_names):
+            function = tool.get("function", {})
+            name = function.get("name", "")
+            description = function.get("description", "")
+            if name:
+                lines.append(f"- {name}: {description}")
+        return "\n".join(lines) if lines else "无可用工具"
+
+    def _select_allowed_tool_names(self, event: Event, context_msg: str, *, is_at_me: bool, is_poke: bool) -> set[str]:
+        _ = is_poke
+        runtime_tool_names = self.tools.get_runtime_tool_names()
+        allowed = {name for name in runtime_tool_names if not name.startswith("mcp_")}
+        text = context_msg.lower()
+
+        def allow_mcp_server(server_name: str) -> None:
+            prefix = f"mcp_{server_name}_"
+            allowed.update(name for name in runtime_tool_names if name.startswith(prefix))
+
+        memory_write_hints = ("记住", "记一下", "记得", "以后", "偏好", "我喜欢", "我不喜欢", "别忘")
+        memory_read_hints = ("还记得", "之前说过", "查记忆", "查一下记忆", "记忆里", "我以前")
+        thinking_hints = ("分析", "规划", "方案", "步骤", "拆解", "排查", "为什么", "怎么弄", "设计", "复杂")
+        fetch_hints = ("http://", "https://", "链接", "网页", "文章", "页面", "总结这个")
+        time_hints = ("几点", "今天", "明天", "昨天", "日期", "时间", "多久", "几点钟")
+        file_hints = ("文件", "目录", "日志", "配置", "读取", "路径")
+        git_hints = ("git", "提交", "分支", "仓库", "diff", "commit")
+
+        if any(hint in context_msg for hint in memory_write_hints + memory_read_hints):
+            allow_mcp_server("memory")
+        if any(hint in context_msg for hint in thinking_hints):
+            allow_mcp_server("thinking")
+        if any(hint in text for hint in fetch_hints):
+            allow_mcp_server("fetch")
+        if any(hint in context_msg for hint in time_hints):
+            allow_mcp_server("time")
+
+        user_id = int(getattr(event, "user_id", 0) or 0)
+        is_admin = user_id == int(settings.admin_uid)
+        if is_admin and is_at_me and any(hint in context_msg for hint in file_hints):
+            allow_mcp_server("filesystem")
+        if is_admin and is_at_me and any(hint in text for hint in git_hints):
+            allow_mcp_server("git")
+
+        return allowed
+
+    @staticmethod
+    def _is_tool_allowed(tool_name: str, allowed_tool_names: set[str] | None) -> bool:
+        return allowed_tool_names is None or tool_name in allowed_tool_names
 
     @staticmethod
     def format_summary_memory(summary: str) -> str:
@@ -345,6 +395,7 @@ class AIService:
         history = self.session_store.get_history(event)
         history = await self._summarize_if_needed(event, history, is_private)
         summary = self.session_store.get_summary(event)
+        allowed_tool_names = self._select_allowed_tool_names(event, context_msg, is_at_me=is_at_me, is_poke=is_poke)
 
         cleaned_history = self.clean_history(history[:])
         request_messages: list[dict[str, Any]] = [
@@ -355,6 +406,7 @@ class AIService:
                     logic_prompt=self.get_logic_prompt(is_private, is_at_me, is_poke=is_poke),
                     summary=summary,
                     context_msg=context_msg,
+                    allowed_tool_names=allowed_tool_names,
                 ),
             }
         ]
@@ -370,6 +422,7 @@ class AIService:
         allow_tools = self.enable_tools
         logger.info("正在请求AI...")
         logger.info("工具能力开关状态: %s", "开启" if allow_tools else "关闭")
+        logger.info("本次可见工具数: %s", len(allowed_tool_names))
         logger.info("动态选模: %s", f"vision ({use_model})" if prepared_image_urls else f"text ({use_model})")
 
         try:
@@ -380,6 +433,7 @@ class AIService:
                     stage="chat",
                     model=use_model,
                     allow_tools=allow_tools,
+                    allowed_tool_names=allowed_tool_names,
                     fallback_index=0,
                     message_row_id=user_message_row_id,
                     request_excerpt=context_msg[:500],
@@ -395,6 +449,7 @@ class AIService:
                             stage="chat-compact",
                             model=use_model,
                             allow_tools=False,
+                            allowed_tool_names=allowed_tool_names,
                             fallback_index=0,
                             message_row_id=user_message_row_id,
                             request_excerpt=context_msg[:500],
@@ -418,6 +473,7 @@ class AIService:
                             exc,
                             message_row_id=user_message_row_id,
                             request_excerpt=context_msg[:500],
+                            allowed_tool_names=allowed_tool_names,
                         )
                 else:
                     response, active_model, allow_tools = await self._retry_with_fallback(
@@ -429,13 +485,19 @@ class AIService:
                         exc,
                         message_row_id=user_message_row_id,
                         request_excerpt=context_msg[:500],
+                        allowed_tool_names=allowed_tool_names,
                     )
 
             for _ in range(2):
                 if should_continue is not None and not should_continue():
                     logger.info("会话触发已更新，放弃旧AI回复后续处理")
                     return False, ""
-                executed = await self._run_tool_calls(response, request_messages, event)
+                executed = await self._run_tool_calls(
+                    response,
+                    request_messages,
+                    event,
+                    allowed_tool_names=allowed_tool_names,
+                )
                 if not executed:
                     break
                 try:
@@ -445,6 +507,7 @@ class AIService:
                         stage="chat-tool-round",
                         model=active_model,
                         allow_tools=allow_tools,
+                        allowed_tool_names=allowed_tool_names,
                         fallback_index=0,
                         message_row_id=user_message_row_id,
                         request_excerpt=context_msg[:500],
@@ -459,6 +522,7 @@ class AIService:
                         exc,
                         message_row_id=user_message_row_id,
                         request_excerpt=context_msg[:500],
+                        allowed_tool_names=allowed_tool_names,
                     )
 
             reply_content = self._extract_content(response.choices[0].message)
@@ -480,6 +544,7 @@ class AIService:
                     retry_reason,
                     message_row_id=user_message_row_id,
                     request_excerpt=context_msg[:500],
+                    allowed_tool_names=allowed_tool_names,
                 )
                 reply_content = self._extract_content(response.choices[0].message)
                 if should_continue is not None and not should_continue():
@@ -502,6 +567,7 @@ class AIService:
                         stage="chat-finalize",
                         model=active_model,
                         allow_tools=False,
+                        allowed_tool_names=allowed_tool_names,
                         fallback_index=0,
                         message_row_id=user_message_row_id,
                         request_excerpt=context_msg[:500],
@@ -517,11 +583,14 @@ class AIService:
             pseudo_tool_call = self._extract_pseudo_tool_call(reply_content) or self._extract_json_tool_call(reply_content)
             if pseudo_tool_call:
                 tool_name, params = pseudo_tool_call
-                tool_result = await self.tools.execute(
-                    tool_name=tool_name,
-                    arguments_json=json.dumps(params, ensure_ascii=False),
-                    event=event,
-                )
+                if self._is_tool_allowed(tool_name, allowed_tool_names):
+                    tool_result = await self.tools.execute(
+                        tool_name=tool_name,
+                        arguments_json=json.dumps(params, ensure_ascii=False),
+                        event=event,
+                    )
+                else:
+                    tool_result = {"ok": False, "tool": tool_name, "error": "该工具当前未按需开放"}
                 self.session_store.append_tool_message(
                     event,
                     tool_name=tool_name,
@@ -558,6 +627,7 @@ class AIService:
         *,
         message_row_id: int | None,
         request_excerpt: str,
+        allowed_tool_names: set[str] | None,
     ) -> tuple[Any, str, bool]:
         reason = self._classify_failure(original_exc)
         logger.warning("触发模型回滚: from=%s reason=%s allow_tools=%s detail=%s", use_model, reason, allow_tools, original_exc)
@@ -582,6 +652,7 @@ class AIService:
                 stage="chat-fallback",
                 model=text_model,
                 allow_tools=allow_tools,
+                allowed_tool_names=allowed_tool_names,
                 fallback_index=1,
                 message_row_id=message_row_id,
                 request_excerpt=request_excerpt,
@@ -598,6 +669,7 @@ class AIService:
                     stage="chat-fallback",
                     model=use_model,
                     allow_tools=False,
+                    allowed_tool_names=allowed_tool_names,
                     fallback_index=0,
                     message_row_id=message_row_id,
                     request_excerpt=request_excerpt,
@@ -624,6 +696,7 @@ class AIService:
                     stage="chat-fallback",
                     model=fallback_model,
                     allow_tools=allow_tools,
+                    allowed_tool_names=allowed_tool_names,
                     fallback_index=index,
                     message_row_id=message_row_id,
                     request_excerpt=request_excerpt,
@@ -645,6 +718,7 @@ class AIService:
         fallback_index: int,
         message_row_id: int | None,
         request_excerpt: str,
+        allowed_tool_names: set[str] | None = None,
         max_retries: int = 3,
     ) -> Any:
         self._log_active_model(stage, model, allow_tools=allow_tools, fallback_index=fallback_index)
@@ -653,6 +727,7 @@ class AIService:
             response = await self._create_completion(
                 messages,
                 allow_tools=allow_tools,
+                allowed_tool_names=allowed_tool_names,
                 model=model,
                 max_retries=max_retries,
             )
@@ -692,6 +767,7 @@ class AIService:
         logic_prompt: str,
         summary: str,
         context_msg: str,
+        allowed_tool_names: set[str] | None = None,
     ) -> str:
         return (
             f"【长期记忆摘要】\n{self.format_summary_memory(summary)}\n\n"
@@ -710,7 +786,7 @@ class AIService:
             "仅可使用下方列出的当前可用工具；"
             "如果工具列表发生变化，以当前列表为准；"
             "不要调用未列出的工具。\n\n"
-            f"【你能干什么】\n{self.format_tool_list()}\n\n"
+            f"【你能干什么】\n{self.format_allowed_tool_list(allowed_tool_names)}\n\n"
             f"【此次用户消息】\n{context_msg}"
         )
 
@@ -759,6 +835,7 @@ class AIService:
         *,
         allow_tools: bool,
         model: str,
+        allowed_tool_names: set[str] | None = None,
         max_retries: int = 3,
     ) -> Any:
         retry_count = 0
@@ -771,8 +848,10 @@ class AIService:
                     "max_tokens": self.max_completion_tokens,
                 }
                 if allow_tools and self.enable_tools:
-                    kwargs["tools"] = self.tools.get_openai_tools()
-                    kwargs["tool_choice"] = "auto"
+                    openai_tools = self.tools.get_openai_tools(allowed_tool_names=allowed_tool_names)
+                    if openai_tools:
+                        kwargs["tools"] = openai_tools
+                        kwargs["tool_choice"] = "auto"
                 try:
                     return await client.chat.completions.create(**kwargs)
                 except TypeError as exc:
@@ -803,6 +882,8 @@ class AIService:
         response: Any,
         request_messages: list[dict[str, Any]],
         event: Event,
+        *,
+        allowed_tool_names: set[str] | None = None,
     ) -> bool:
         message = response.choices[0].message
         tool_calls = getattr(message, "tool_calls", None) or []
@@ -830,11 +911,14 @@ class AIService:
         for tool_call in tool_calls:
             logger.info("执行原生工具调用: %s, 参数: %s", tool_call.function.name, tool_call.function.arguments or "{}")
             tool_args = self._safe_load_json_object(tool_call.function.arguments)
-            result = await self.tools.execute(
-                tool_name=tool_call.function.name,
-                arguments_json=tool_call.function.arguments,
-                event=event,
-            )
+            if self._is_tool_allowed(tool_call.function.name, allowed_tool_names):
+                result = await self.tools.execute(
+                    tool_name=tool_call.function.name,
+                    arguments_json=tool_call.function.arguments,
+                    event=event,
+                )
+            else:
+                result = {"ok": False, "tool": tool_call.function.name, "error": "该工具当前未按需开放"}
             logger.info("原生工具调用结果: %s", json.dumps(result, ensure_ascii=False))
             self.session_store.append_tool_message(
                 event,

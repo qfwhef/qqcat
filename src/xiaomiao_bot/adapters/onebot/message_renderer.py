@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment
@@ -23,6 +24,22 @@ def build_at_message(reply_content: str) -> Message:
     tail = reply_content[last_end:]
     if tail:
         msg += MessageSegment.text(tail)
+    return msg
+
+
+def build_expression_message(
+    reply_content: str = "",
+    *,
+    face_id: int | None = None,
+    image_path: str | None = None,
+    parse_at: bool = True,
+) -> Message:
+    msg = build_at_message(reply_content) if parse_at else Message(reply_content)
+    if face_id is not None:
+        msg += MessageSegment.face(int(face_id))
+    if image_path:
+        path = Path(image_path).resolve()
+        msg += MessageSegment.image(path.as_uri())
     return msg
 
 

@@ -115,6 +115,8 @@ class Settings:
     image_cache_ttl_seconds: int = int(os.getenv("IMAGE_CACHE_TTL_SECONDS", "86400"))
     image_cache_max_bytes: int = int(os.getenv("IMAGE_CACHE_MAX_BYTES", str(2 * 1024 * 1024)))
     image_download_timeout_seconds: int = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT_SECONDS", "12"))
+    meme_dir: str = os.getenv("MEME_DIR", "data/memes")
+    meme_reply_rate: int = int(os.getenv("MEME_REPLY_RATE", "35"))
 
     @property
     def openai_client(self) -> AsyncOpenAI:
