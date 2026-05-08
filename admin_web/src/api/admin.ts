@@ -103,6 +103,9 @@ export const adminApi = {
   installMcpPreset(presetName: string) {
     return http.post(`/mcp-presets/${presetName}/install`).then((res) => res.data)
   },
+  downloadMcpNpmPackage(payload: { package_name: string }) {
+    return http.post('/mcp-downloads/npm', payload).then((res) => res.data)
+  },
   getMcpTools(params: Record<string, unknown> = {}) {
     return http.get<PagedResult>('/mcp-tools', { params: cleanParams(params) }).then((res) => res.data)
   },

@@ -7,6 +7,7 @@
       </div>
       <div class="header-actions">
         <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
+        <el-button :icon="Download" @click="openDownloadDialog">下载 MCP</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreateDialog">新增服务</el-button>
       </div>
     </div>
@@ -145,6 +146,7 @@
           <template #default="{ row }">
             <el-switch
               :model-value="Boolean(row.admin_only)"
+              :disabled="!Boolean(row.server_enabled)"
               @change="toggleTool(row, { admin_only: $event })"
             />
           </template>
@@ -152,7 +154,8 @@
         <el-table-column label="启用" width="90">
           <template #default="{ row }">
             <el-switch
-              :model-value="Boolean(row.is_enabled)"
+              :model-value="Boolean(row.is_enabled) && Boolean(row.server_enabled)"
+              :disabled="!Boolean(row.server_enabled)"
               @change="toggleTool(row, { is_enabled: $event })"
             />
           </template>
@@ -241,6 +244,58 @@
         </div>
       </template>
     </el-card>
+
+    <el-dialog v-model="downloadDialogVisible" width="680px" class="mcp-dialog">
+      <template #header>
+        <div class="dialog-head">
+          <h3>下载 MCP</h3>
+          <el-tag type="info">npm</el-tag>
+        </div>
+      </template>
+      <div class="download-panel">
+        <el-form label-position="top">
+          <el-form-item label="手动输入 npm 包名">
+            <div class="download-input-row">
+              <el-input
+                v-model="downloadForm.package_name"
+                placeholder="例如 @modelcontextprotocol/server-memory"
+                @keyup.enter="downloadManualPackage"
+              />
+              <el-button
+                type="primary"
+                :icon="Download"
+                :loading="downloadingName === downloadForm.package_name.trim()"
+                @click="downloadManualPackage"
+              >
+                下载
+              </el-button>
+            </div>
+          </el-form-item>
+        </el-form>
+
+        <div class="download-section-title">推荐 MCP</div>
+        <div class="download-grid">
+          <div v-for="item in npmDownloadRecommendations" :key="item.package_name" class="download-item">
+            <div>
+              <strong>{{ item.display_name }}</strong>
+              <span>{{ item.summary }}</span>
+              <code>{{ item.package_name }}</code>
+            </div>
+            <div class="download-actions">
+              <el-button
+                size="small"
+                :icon="Download"
+                :loading="downloadingName === item.package_name"
+                @click="downloadNpmPackage(item.package_name)"
+              >
+                下载
+              </el-button>
+              <el-button size="small" @click="fillPresetFromDownload(item.preset_name)">填配置</el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
 
     <el-dialog v-model="dialogVisible" width="760px" class="mcp-dialog">
       <template #header>
@@ -339,6 +394,8 @@ interface McpTool {
   description?: string
   is_enabled: boolean | number
   admin_only: boolean | number
+  server_enabled?: boolean | number
+  server_admin_only?: boolean | number
 }
 
 interface McpToolCallLog {
@@ -365,6 +422,13 @@ interface McpPreset {
   command: string
   args_json: string[]
   env_json: Record<string, string>
+}
+
+interface McpDownloadRecommendation {
+  display_name: string
+  summary: string
+  package_name: string
+  preset_name: string
 }
 
 const mcpPresets: McpPreset[] = [
@@ -406,6 +470,27 @@ const mcpPresets: McpPreset[] = [
   },
 ]
 
+const npmDownloadRecommendations: McpDownloadRecommendation[] = [
+  {
+    display_name: '长期记忆',
+    summary: '保存实体、关系和事实，适合做长期上下文',
+    package_name: '@modelcontextprotocol/server-memory',
+    preset_name: 'memory',
+  },
+  {
+    display_name: '步骤思考',
+    summary: '复杂问题拆步分析，适合规划和排障',
+    package_name: '@modelcontextprotocol/server-sequential-thinking',
+    preset_name: 'thinking',
+  },
+  {
+    display_name: '文件系统',
+    summary: '读取指定目录文件，适合管理员受控使用',
+    package_name: '@modelcontextprotocol/server-filesystem',
+    preset_name: 'filesystem',
+  },
+]
+
 const servers = ref<McpServer[]>([])
 const tools = ref<McpTool[]>([])
 const callLogs = ref<McpToolCallLog[]>([])
@@ -415,6 +500,7 @@ const saving = ref(false)
 const testingName = ref('')
 const refreshingName = ref('')
 const installingName = ref('')
+const downloadingName = ref('')
 const selectedServer = ref('')
 const logPage = ref(1)
 const logPageSize = ref(20)
@@ -424,7 +510,12 @@ const logFilters = reactive({
   is_success: '',
 })
 const dialogVisible = ref(false)
+const downloadDialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
+
+const downloadForm = reactive({
+  package_name: '',
+})
 
 const form = reactive({
   server_name: '',
@@ -504,6 +595,11 @@ const handleLogPageSizeChange = () => {
 
 const formatJson = (value: unknown) => JSON.stringify(value ?? {}, null, 2)
 
+const openDownloadDialog = () => {
+  downloadForm.package_name = ''
+  downloadDialogVisible.value = true
+}
+
 const openCreateDialog = () => {
   dialogMode.value = 'create'
   resetForm()
@@ -527,6 +623,32 @@ const openPresetDialog = (preset: McpPreset) => {
 
 const presetInstalled = (preset: McpPreset) =>
   servers.value.some((server) => server.server_name === preset.server_name)
+
+const downloadNpmPackage = async (packageName: string) => {
+  const cleaned = packageName.trim()
+  if (!cleaned) {
+    ElMessage.warning('请输入 npm 包名')
+    return
+  }
+  downloadingName.value = cleaned
+  try {
+    await adminApi.downloadMcpNpmPackage({ package_name: cleaned })
+    ElMessage.success('下载完成，可以填配置后测试接入')
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail || error?.message || '下载失败')
+  } finally {
+    downloadingName.value = ''
+  }
+}
+
+const downloadManualPackage = () => downloadNpmPackage(downloadForm.package_name)
+
+const fillPresetFromDownload = (presetName: string) => {
+  const preset = mcpPresets.find((item) => item.server_name === presetName)
+  if (!preset) return
+  downloadDialogVisible.value = false
+  openPresetDialog(preset)
+}
 
 const installPreset = async (preset: McpPreset) => {
   installingName.value = preset.server_name
@@ -627,7 +749,7 @@ const saveAndTestServer = async () => {
 
 const toggleServer = async (row: McpServer, value: string | number | boolean) => {
   await adminApi.updateMcpServer(row.server_name, { is_enabled: Boolean(value) })
-  await loadServers()
+  await loadData()
 }
 
 const testServer = async (row: McpServer) => {
@@ -738,6 +860,66 @@ onMounted(loadData)
   width: 100%;
 }
 
+.download-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.download-input-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+}
+
+.download-section-title {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.download-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr;
+}
+
+.download-item {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.download-item > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.download-item span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.download-item code {
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.download-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .section-head {
   justify-content: space-between;
 }
@@ -756,8 +938,11 @@ onMounted(loadData)
 }
 
 .desc-text {
+  display: block;
   color: #64748b;
   line-height: 1.5;
+  max-height: 72px;
+  overflow: auto;
 }
 
 .log-detail {
@@ -829,9 +1014,16 @@ onMounted(loadData)
   }
 
   .header-actions,
-  .section-head {
+  .section-head,
+  .download-item,
+  .download-input-row {
     align-items: stretch;
     flex-direction: column;
+    grid-template-columns: 1fr;
+  }
+
+  .download-actions {
+    justify-content: flex-start;
   }
 }
 </style>

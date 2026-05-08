@@ -22,6 +22,7 @@ from ..core.config import settings
 from ..core.logging import get_logger
 from ..infrastructure.database import database, dumps_json, loads_json
 from .mcp_client import McpClientManager
+from .mcp_descriptions import localize_mcp_tool
 
 logger = get_logger("ToolRegistry")
 ToolHandler = Callable[[dict[str, Any], Event], Awaitable[dict[str, Any]]]
@@ -423,10 +424,15 @@ except Exception as exc:  # noqa: BLE001
             )
         for row in self._load_enabled_mcp_tool_rows():
             tool_name = str(row["exposed_tool_name"])
+            localized = localize_mcp_tool(
+                str(row.get("server_name") or ""),
+                str(row.get("original_tool_name") or ""),
+                str(row.get("description") or ""),
+            )
             runtime_tools[tool_name] = ToolDefinition(
                 name=tool_name,
-                display_name=str(row.get("display_name") or row.get("original_tool_name") or tool_name),
-                description=str(row.get("description") or ""),
+                display_name=str(localized["display_name"] or row.get("display_name") or tool_name),
+                description=str(localized["description"] or row.get("description") or ""),
                 parameters=self._tool_parameters(
                     {"parameters_json": row.get("parameters_json")},
                     {"type": "object", "properties": {}, "additionalProperties": True},
@@ -685,7 +691,9 @@ except Exception as exc:  # noqa: BLE001
                 continue
             exposed_name = self._make_mcp_exposed_tool_name(server_name, original_name)
             seen_names.add(original_name)
-            description = str(tool.get("description") or "")
+            localized = localize_mcp_tool(server_name, original_name, str(tool.get("description") or ""))
+            display_name = localized["display_name"] or original_name
+            description = localized["description"]
             parameters = tool.get("input_schema") or {"type": "object", "properties": {}, "additionalProperties": True}
             if not isinstance(parameters, dict):
                 parameters = {"type": "object", "properties": {}, "additionalProperties": True}
@@ -706,7 +714,7 @@ except Exception as exc:  # noqa: BLE001
                     server_name,
                     exposed_name,
                     original_name,
-                    original_name,
+                    display_name,
                     description,
                     dumps_json(parameters),
                 ),

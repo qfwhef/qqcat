@@ -39,12 +39,15 @@ from ..infrastructure.database import database, dumps_json, loads_json
 from ..infrastructure.runtime_config_store import RuntimeConfigStore
 from ..infrastructure.session_store import session_store
 from ..tools import ToolRegistry
+from ..tools.mcp_descriptions import localize_mcp_tool
 
 logger = get_logger("后台服务")
 
 
 class AdminService:
     """Admin APIs backing service."""
+
+    NPM_PACKAGE_PATTERN = re.compile(r"^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$")
 
     MCP_PRESETS: dict[str, dict[str, Any]] = {
         "filesystem": {
@@ -861,6 +864,11 @@ class AdminService:
             f"UPDATE bot_mcp_server_config SET {', '.join(updates)} WHERE server_name=%s",
             tuple(params),
         )
+        if "is_enabled" in payload and not bool(payload["is_enabled"]):
+            database.execute(
+                "UPDATE bot_mcp_tool_cache SET is_enabled=0 WHERE server_name=%s",
+                (server_name,),
+            )
         after = self._find_mcp_server(server_name)
         self._log_config_change(
             config_domain="mcp_server",
@@ -952,6 +960,25 @@ class AdminService:
             "refresh": refresh_result,
         }
 
+    def download_mcp_npm_package(self, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
+        package_name = self._validate_npm_package_name(str(payload.get("package_name") or ""))
+        install_log = self._run_mcp_preset_command(["npm", "install", "-g", package_name], timeout_seconds=300)
+        result = {
+            "ok": True,
+            "source": "npm",
+            "package_name": package_name,
+            "install_log": install_log,
+        }
+        self._log_config_change(
+            config_domain="mcp_download",
+            scope_ref=package_name,
+            change_type="download",
+            before_json=None,
+            after_json=result,
+            changed_by=changed_by,
+        )
+        return result
+
     def list_mcp_tools(self, *, server_name: str = "") -> list[dict[str, Any]]:
         filters: list[str] = []
         params: list[Any] = []
@@ -978,6 +1005,13 @@ class AdminService:
                 str(row.get("parameters_json")) if row.get("parameters_json") is not None else None,
                 {},
             )
+            localized = localize_mcp_tool(
+                str(row.get("server_name") or ""),
+                str(row.get("original_tool_name") or ""),
+                str(row.get("description") or ""),
+            )
+            row["display_name"] = localized["display_name"] or row.get("display_name")
+            row["description"] = localized["description"] or row.get("description")
         return rows
 
     def list_mcp_tool_call_logs(
@@ -1860,14 +1894,28 @@ class AdminService:
         logs.append(self._run_mcp_preset_command(["git", "-C", repo_path, "config", "user.email", "qqcat@local"]))
         logs.append(self._run_mcp_preset_command(["git", "-C", repo_path, "config", "user.name", "QQcat"]))
 
-    def _run_mcp_preset_command(self, command: list[str], *, check: bool = True) -> dict[str, Any]:
+    def _validate_npm_package_name(self, package_name: str) -> str:
+        cleaned = package_name.strip()
+        if not cleaned:
+            raise ValueError("请输入 npm 包名")
+        if len(cleaned) > 214 or not self.NPM_PACKAGE_PATTERN.fullmatch(cleaned):
+            raise ValueError("npm 包名格式不正确，只支持包名，不支持完整命令")
+        return cleaned
+
+    def _run_mcp_preset_command(
+        self,
+        command: list[str],
+        *,
+        check: bool = True,
+        timeout_seconds: int = 180,
+    ) -> dict[str, Any]:
         try:
             completed = subprocess.run(
                 command,
                 capture_output=True,
                 check=False,
                 text=True,
-                timeout=180,
+                timeout=timeout_seconds,
             )
         except FileNotFoundError as exc:
             raise ValueError(f"命令不存在，请先安装: {command[0]}") from exc

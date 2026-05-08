@@ -196,6 +196,10 @@ class McpToolUpdatePayload(BaseModel):
     admin_only: bool | None = None
 
 
+class McpNpmDownloadPayload(BaseModel):
+    package_name: str = Field(min_length=1, max_length=214)
+
+
 class AdminUserCreatePayload(BaseModel):
     user_id: int
     nickname: str | None = None
@@ -738,6 +742,22 @@ async def install_mcp_preset(
     try:
         return await get_container().admin_service.install_mcp_preset(
             preset_name,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/mcp-downloads/npm")
+async def download_mcp_npm_package(
+    payload: McpNpmDownloadPayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.download_mcp_npm_package(
+            _model_dump(payload),
             changed_by=_changed_by(admin),
         )
     except ValueError as exc:
