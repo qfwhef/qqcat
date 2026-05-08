@@ -22,6 +22,7 @@ NapCat(Docker) -> OneBot WebSocket -> NoneBot(Python虚拟环境) -> 管理后�
   - 内置工具
   - 后台新增 HTTP 工具
   - 单工具启停
+  - MCP Server 接入，自动发现并调用 MCP tools（默认仅管理员可用）
 - 管理后台
   - 系统检测：检查 MySQL、NapCat / OneBot、AI 模型、工具调用和近期失败次数
   - 运行配置热更新
@@ -47,6 +48,7 @@ NapCat(Docker) -> OneBot WebSocket -> NoneBot(Python虚拟环境) -> 管理后�
 5. `screen`
 6. `pnpm`
 7. 一个已经登录好的 NapCat 容器
+8. 如果要使用 MCP 预设工具，需要 Node.js 20+、`npx`；Git MCP 还需要 `uvx` 和 `git`
 
 如果你是本地部署，也可以：
 
@@ -240,6 +242,8 @@ pip install -e .
 - `bot_private_summary`
 - `bot_ai_call_log`
 - `bot_tool_config`
+- `bot_mcp_server_config`
+- `bot_mcp_tool_cache`
 - `bot_scheduled_task`
 - `bot_message_session_registry`
 
@@ -445,12 +449,45 @@ http://127.0.0.1:8080/admin-ui/login
 
 - 内置工具启停
 - 新增 HTTP 工具
+- 新增 Python 工具
 - 编辑 HTTP 工具
+- 编辑 Python 工具
 - 删除 HTTP 工具
+- MCP 服务接入与工具缓存启停
 
 当前还不支持：
 
-- 后台直接写 Python 代码工具
+- 按群/私聊精细配置 MCP 工具权限
+
+### 3.1 MCP 服务
+
+后台可以接入 `stdio` 或 `streamable_http` 类型的 MCP Server。推荐先用“常用预设”里的“一键安装”，它会自动完成：
+
+- 安装对应 MCP Server 运行包
+- 写入或更新 MCP 服务配置
+- 启用服务
+- 测试连接
+- 刷新工具缓存
+
+如果你是手动新增 MCP Server，保存后需要先点击“测试”，确认服务能连接，再点击“刷新工具”把 MCP tools 缓存到后台。MCP 工具默认仅管理员可用，普通群友触发会被拒绝。
+
+如果机器人跑在 Docker 容器内，stdio MCP 的路径要填写容器内路径。当前部署中项目挂载在容器的 `/app`，因此文件系统和 Git MCP 预设默认使用 `/app`。
+
+常用预设当前有 4 个：
+
+- `filesystem`：通过 `npx -y @modelcontextprotocol/server-filesystem /app` 启动，用来访问容器内 `/app`
+- `memory`：通过 `npx -y @modelcontextprotocol/server-memory` 启动，用来维护结构化长期记忆
+- `thinking`：通过 `npx -y @modelcontextprotocol/server-sequential-thinking` 启动，用来提供步骤思考工具
+- `git`：通过 `uvx mcp-server-git --repository /app` 启动，用来查看仓库状态、diff、log 等
+
+`filesystem`、`memory`、`thinking` 需要 Node.js 20+ 和 `npx`。`git` 需要 `uvx` 和 `git`，并且 `/app` 必须是一个 Git 仓库；如果不是仓库，一键安装会尝试执行 `git init`。
+
+当前线上验证过的工具数量：
+
+- `filesystem`：14 个工具
+- `memory`：9 个工具
+- `thinking`：1 个工具
+- `git`：12 个工具
 
 ### 4. 定时任务
 
@@ -542,7 +579,48 @@ ss -ltnp | grep 8080
 - `status`
 - `next_run_at`
 
-### 5. 选择 `200/page` 报错
+### 5. MCP 预设启动失败
+
+先确认 MCP 运行依赖在机器人运行环境里可用。如果机器人跑在 Docker 容器内，要进容器检查：
+
+```bash
+docker exec -it xiaomiao-bot bash
+node --version
+npx --version
+uvx --version
+git --version
+```
+
+`npx` 类 MCP Server 使用 Node.js 20+。当前 Docker 部署可用：
+
+```bash
+docker exec -it xiaomiao-bot bash -lc 'npm install -g n && n 20 && hash -r'
+docker exec -it xiaomiao-bot bash -lc '/app/.venv-docker/bin/python -m pip install uv'
+```
+
+注意：Python 依赖要装进机器人实际运行的虚拟环境，不要只装到容器系统 Python。当前 Docker 部署里机器人使用：
+
+```bash
+/app/.venv-docker/bin/python
+```
+
+所以 MCP SDK 也要在这个环境里能导入：
+
+```bash
+docker exec -it xiaomiao-bot bash -lc '/app/.venv-docker/bin/python -c "import mcp; print(\"mcp ok\")"'
+```
+
+文件系统和 Git MCP 的路径要写容器内路径。当前部署项目在容器里是 `/app`，不要写宿主机的 `/root/mybot/xiaomiao_v2`。
+
+如果后台点“一键安装”失败，按顺序查：
+
+```bash
+docker logs --tail=120 xiaomiao-bot
+docker exec -it xiaomiao-bot bash -lc 'node --version && npx --version && uvx --version && git --version'
+docker exec -it xiaomiao-bot bash -lc '/app/.venv-docker/bin/python -c "import mcp; print(\"mcp ok\")"'
+```
+
+### 6. 选择 `200/page` 报错
 
 现在代码已经支持 `200/page`。  
 如果你还看到这个错误，说明服务器后端代码没同步或没重启。

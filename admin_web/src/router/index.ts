@@ -25,6 +25,7 @@ const router = createRouter({
         },
         { path: 'runtime', name: 'runtime', component: () => import('../views/RuntimeConfigView.vue') },
         { path: 'tools', name: 'tools', component: () => import('../views/ToolsView.vue') },
+        { path: 'mcp', name: 'mcp', component: () => import('../views/McpView.vue') },
         { path: 'prompts', name: 'prompts', component: () => import('../views/PromptsView.vue') },
         { path: 'access', name: 'access', component: () => import('../views/AccessView.vue') },
         {

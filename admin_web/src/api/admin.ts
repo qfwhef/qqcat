@@ -82,6 +82,36 @@ export const adminApi = {
   deleteTool(toolName: string) {
     return http.delete(`/tools/${toolName}`).then((res) => res.data)
   },
+  getMcpServers() {
+    return http.get<PagedResult>('/mcp-servers').then((res) => res.data)
+  },
+  createMcpServer(payload: Record<string, unknown>) {
+    return http.post('/mcp-servers', payload).then((res) => res.data)
+  },
+  updateMcpServer(serverName: string, payload: Record<string, unknown>) {
+    return http.put(`/mcp-servers/${serverName}`, payload).then((res) => res.data)
+  },
+  deleteMcpServer(serverName: string) {
+    return http.delete(`/mcp-servers/${serverName}`).then((res) => res.data)
+  },
+  testMcpServer(serverName: string) {
+    return http.post(`/mcp-servers/${serverName}/test`).then((res) => res.data)
+  },
+  refreshMcpTools(serverName: string) {
+    return http.post(`/mcp-servers/${serverName}/refresh-tools`).then((res) => res.data)
+  },
+  installMcpPreset(presetName: string) {
+    return http.post(`/mcp-presets/${presetName}/install`).then((res) => res.data)
+  },
+  getMcpTools(params: Record<string, unknown> = {}) {
+    return http.get<PagedResult>('/mcp-tools', { params: cleanParams(params) }).then((res) => res.data)
+  },
+  getMcpToolCallLogs(params: Record<string, unknown> = {}) {
+    return http.get<PagedResult>('/mcp-tool-call-logs', { params: cleanParams(params) }).then((res) => res.data)
+  },
+  updateMcpTool(exposedToolName: string, payload: Record<string, unknown>) {
+    return http.put(`/mcp-tools/${exposedToolName}`, payload).then((res) => res.data)
+  },
   updateSecret(secretKey: string, payload: { secret_value: string; value_hint?: string }) {
     return http.put(`/secrets/${secretKey}`, payload).then((res) => res.data)
   },

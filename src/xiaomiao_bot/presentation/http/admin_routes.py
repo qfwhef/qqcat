@@ -24,6 +24,7 @@ ADMIN_MENUS = [
     {"key": "health", "label": "系统检测", "path": "/admin-ui/health"},
     {"key": "runtime", "label": "AI 运行配置", "path": "/admin-ui/runtime"},
     {"key": "tools", "label": "工具管理", "path": "/admin-ui/tools"},
+    {"key": "mcp", "label": "MCP 服务", "path": "/admin-ui/mcp"},
     {"key": "scheduled-tasks", "label": "定时任务", "path": "/admin-ui/scheduled-tasks"},
     {"key": "prompts", "label": "提示词", "path": "/admin-ui/prompts"},
     {"key": "access", "label": "访问控制", "path": "/admin-ui/access"},
@@ -158,6 +159,41 @@ class ToolUpdatePayload(BaseModel):
     python_allow_network: bool | None = None
     python_timeout_seconds: int | None = Field(default=None, ge=1, le=60)
     is_enabled: bool | None = None
+
+
+class McpServerCreatePayload(BaseModel):
+    server_name: str
+    display_name: str | None = None
+    transport: str
+    command: str | None = None
+    args_json: list[Any] | None = None
+    env_json: dict[str, Any] | None = None
+    url: str | None = None
+    headers_json: dict[str, Any] | None = None
+    timeout_seconds: int = Field(default=15, ge=1, le=120)
+    is_enabled: bool = True
+    admin_only: bool = True
+
+
+class McpServerUpdatePayload(BaseModel):
+    display_name: str | None = None
+    transport: str | None = None
+    command: str | None = None
+    args_json: list[Any] | None = None
+    env_json: dict[str, Any] | None = None
+    url: str | None = None
+    headers_json: dict[str, Any] | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1, le=120)
+    is_enabled: bool | None = None
+    admin_only: bool | None = None
+
+
+class McpToolUpdatePayload(BaseModel):
+    display_name: str | None = None
+    description: str | None = None
+    parameters_json: dict[str, Any] | None = None
+    is_enabled: bool | None = None
+    admin_only: bool | None = None
 
 
 class AdminUserCreatePayload(BaseModel):
@@ -598,6 +634,166 @@ async def delete_tool(
     try:
         return get_container().admin_service.delete_tool(
             tool_name,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/mcp-servers")
+async def list_mcp_servers(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    return _page_result(get_container().admin_service.list_mcp_servers())
+
+
+@router.post("/mcp-servers")
+async def create_mcp_server(
+    payload: McpServerCreatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.create_mcp_server(
+            _model_dump(payload),
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.put("/mcp-servers/{server_name}")
+async def update_mcp_server(
+    server_name: str,
+    payload: McpServerUpdatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.update_mcp_server(
+            server_name,
+            _model_dump(payload),
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/mcp-servers/{server_name}")
+async def delete_mcp_server(
+    server_name: str,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.delete_mcp_server(
+            server_name,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/mcp-servers/{server_name}/test")
+async def test_mcp_server(
+    server_name: str,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    try:
+        return await get_container().admin_service.test_mcp_server(server_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/mcp-servers/{server_name}/refresh-tools")
+async def refresh_mcp_tools(
+    server_name: str,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return await get_container().admin_service.refresh_mcp_tools(
+            server_name,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/mcp-presets/{preset_name}/install")
+async def install_mcp_preset(
+    preset_name: str,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return await get_container().admin_service.install_mcp_preset(
+            preset_name,
+            changed_by=_changed_by(admin),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/mcp-tools")
+async def list_mcp_tools(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+    server_name: str = Query(default=""),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    return _page_result(get_container().admin_service.list_mcp_tools(server_name=server_name))
+
+
+@router.get("/mcp-tool-call-logs")
+async def list_mcp_tool_call_logs(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    server_name: str = Query(default=""),
+    exposed_tool_name: str = Query(default=""),
+    session_type: str = Query(default=""),
+    session_id: int | None = Query(default=None),
+    is_success: bool | None = Query(default=None),
+    start_at: str = Query(default=""),
+    end_at: str = Query(default=""),
+) -> dict[str, Any]:
+    _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.list_mcp_tool_call_logs(
+        page=page,
+        page_size=page_size,
+        server_name=server_name,
+        exposed_tool_name=exposed_tool_name,
+        session_type=session_type,
+        session_id=session_id,
+        is_success=is_success,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+
+@router.put("/mcp-tools/{exposed_tool_name}")
+async def update_mcp_tool(
+    exposed_tool_name: str,
+    payload: McpToolUpdatePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    try:
+        return get_container().admin_service.update_mcp_tool(
+            exposed_tool_name,
+            _model_dump(payload),
             changed_by=_changed_by(admin),
         )
     except ValueError as exc:

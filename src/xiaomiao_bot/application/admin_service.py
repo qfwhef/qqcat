@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from nonebot import get_bots
@@ -25,26 +27,72 @@ from ..application.secret_service import SecretService
 from ..core.constants import (
     CFG_BLOCKED_GROUPS,
     CFG_BLOCKED_USERS,
-    CFG_ENABLE_SUMMARY_MEMORY,
-    CFG_ENABLE_TOOLS,
     CFG_PROMPT_BASE,
     CFG_PROMPT_LOGIC_AT_ME,
     CFG_PROMPT_LOGIC_GROUP,
     CFG_PROMPT_LOGIC_POKE,
     CFG_PROMPT_LOGIC_PRIVATE,
     CFG_PROMPT_SUMMARY_SYSTEM,
-    CFG_SUMMARY_ONLY_GROUP,
 )
 from ..core.logging import get_logger
 from ..infrastructure.database import database, dumps_json, loads_json
 from ..infrastructure.runtime_config_store import RuntimeConfigStore
 from ..infrastructure.session_store import session_store
+from ..tools import ToolRegistry
 
 logger = get_logger("后台服务")
 
 
 class AdminService:
     """Admin APIs backing service."""
+
+    MCP_PRESETS: dict[str, dict[str, Any]] = {
+        "filesystem": {
+            "server_name": "filesystem",
+            "display_name": "文件系统",
+            "transport": "stdio",
+            "command": "npx",
+            "args_json": ["-y", "@modelcontextprotocol/server-filesystem", "/app"],
+            "env_json": {},
+            "timeout_seconds": 20,
+            "admin_only": True,
+            "install_steps": [["npm", "install", "-g", "@modelcontextprotocol/server-filesystem"]],
+        },
+        "memory": {
+            "server_name": "memory",
+            "display_name": "长期记忆",
+            "transport": "stdio",
+            "command": "npx",
+            "args_json": ["-y", "@modelcontextprotocol/server-memory"],
+            "env_json": {},
+            "timeout_seconds": 20,
+            "admin_only": True,
+            "install_steps": [["npm", "install", "-g", "@modelcontextprotocol/server-memory"]],
+        },
+        "thinking": {
+            "server_name": "thinking",
+            "display_name": "步骤思考",
+            "transport": "stdio",
+            "command": "npx",
+            "args_json": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+            "env_json": {},
+            "timeout_seconds": 20,
+            "admin_only": True,
+            "install_steps": [["npm", "install", "-g", "@modelcontextprotocol/server-sequential-thinking"]],
+        },
+        "git": {
+            "server_name": "git",
+            "display_name": "Git 仓库",
+            "transport": "stdio",
+            "command": "uvx",
+            "args_json": ["mcp-server-git", "--repository", "/app"],
+            "env_json": {},
+            "timeout_seconds": 20,
+            "admin_only": True,
+            "install_steps": [["uvx", "--from", "mcp-server-git", "mcp-server-git", "--help"]],
+            "prepare_git_repo": "/app",
+        },
+    }
 
     def __init__(
         self,
@@ -53,12 +101,14 @@ class AdminService:
         admin_auth_service: AdminAuthService,
         minecraft_service: MinecraftService,
         scheduled_task_service: ScheduledTaskService,
+        tools: ToolRegistry,
     ) -> None:
         self.runtime_config_store = runtime_config_store
         self.secret_service = secret_service
         self.admin_auth_service = admin_auth_service
         self.minecraft_service = minecraft_service
         self.scheduled_task_service = scheduled_task_service
+        self.tools = tools
 
     def get_overview(self) -> dict[str, Any]:
         since = datetime.now() - timedelta(hours=24)
@@ -715,6 +765,314 @@ class AdminService:
             changed_by=changed_by,
         )
         return {"deleted": True, "tool_name": tool_name}
+
+    def list_mcp_servers(self) -> list[dict[str, Any]]:
+        rows = database.fetch_all(
+            """
+            SELECT
+                s.id, s.server_name, s.display_name, s.transport, s.command,
+                s.args_json, s.env_json, s.url, s.headers_json, s.timeout_seconds,
+                s.is_enabled, s.admin_only, s.last_status, s.last_error,
+                s.created_at, s.updated_at,
+                COALESCE(tc.tool_count, 0) AS tool_count
+            FROM bot_mcp_server_config s
+            LEFT JOIN (
+                SELECT server_name, COUNT(*) AS tool_count
+                FROM bot_mcp_tool_cache
+                GROUP BY server_name
+            ) tc ON s.server_name=tc.server_name
+            ORDER BY s.server_name ASC
+            """,
+            (),
+        )
+        for row in rows:
+            self._parse_mcp_json_fields(row)
+        return rows
+
+    def create_mcp_server(self, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
+        server_name = self._validate_mcp_server_name(payload.get("server_name"))
+        if self._find_mcp_server(server_name):
+            raise ValueError("MCP 服务名已存在")
+        transport = self._validate_mcp_transport(payload.get("transport"))
+        timeout_seconds = min(120, max(1, int(payload.get("timeout_seconds") or 15)))
+        database.execute(
+            """
+            INSERT INTO bot_mcp_server_config(
+                server_name, display_name, transport, command, args_json, env_json,
+                url, headers_json, timeout_seconds, is_enabled, admin_only
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                server_name,
+                payload.get("display_name") or server_name,
+                transport,
+                self._nullable_str(payload.get("command")),
+                dumps_json(payload.get("args_json") or []),
+                dumps_json(payload.get("env_json") or {}),
+                self._nullable_str(payload.get("url")),
+                dumps_json(payload.get("headers_json") or {}),
+                timeout_seconds,
+                1 if bool(payload.get("is_enabled", True)) else 0,
+                1 if bool(payload.get("admin_only", True)) else 0,
+            ),
+        )
+        after = self._find_mcp_server(server_name)
+        self._log_config_change(
+            config_domain="mcp_server",
+            scope_ref=server_name,
+            change_type="create",
+            before_json=None,
+            after_json=after,
+            changed_by=changed_by,
+        )
+        return after or {}
+
+    def update_mcp_server(self, server_name: str, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
+        before = self._find_mcp_server(server_name)
+        if not before:
+            raise ValueError("MCP 服务不存在")
+        updates: list[str] = []
+        params: list[Any] = []
+        for field in ["display_name", "command", "url"]:
+            if field in payload:
+                updates.append(f"{field}=%s")
+                params.append(self._nullable_str(payload[field]))
+        if "transport" in payload:
+            updates.append("transport=%s")
+            params.append(self._validate_mcp_transport(payload["transport"]))
+        if "timeout_seconds" in payload:
+            updates.append("timeout_seconds=%s")
+            params.append(min(120, max(1, int(payload["timeout_seconds"] or 15))))
+        if "is_enabled" in payload:
+            updates.append("is_enabled=%s")
+            params.append(1 if bool(payload["is_enabled"]) else 0)
+        if "admin_only" in payload:
+            updates.append("admin_only=%s")
+            params.append(1 if bool(payload["admin_only"]) else 0)
+        for field in ["args_json", "env_json", "headers_json"]:
+            if field in payload:
+                updates.append(f"{field}=%s")
+                fallback = [] if field == "args_json" else {}
+                params.append(dumps_json(payload[field] if payload[field] is not None else fallback))
+        if not updates:
+            return before
+        params.append(server_name)
+        database.execute(
+            f"UPDATE bot_mcp_server_config SET {', '.join(updates)} WHERE server_name=%s",
+            tuple(params),
+        )
+        after = self._find_mcp_server(server_name)
+        self._log_config_change(
+            config_domain="mcp_server",
+            scope_ref=server_name,
+            change_type="update",
+            before_json=before,
+            after_json=after,
+            changed_by=changed_by,
+        )
+        return after or before
+
+    def delete_mcp_server(self, server_name: str, *, changed_by: str) -> dict[str, Any]:
+        before = self._find_mcp_server(server_name)
+        if not before:
+            raise ValueError("MCP 服务不存在")
+        database.execute("DELETE FROM bot_mcp_tool_cache WHERE server_name=%s", (server_name,))
+        database.execute("DELETE FROM bot_mcp_server_config WHERE server_name=%s", (server_name,))
+        result = {"deleted": True, "server_name": server_name}
+        self._log_config_change(
+            config_domain="mcp_server",
+            scope_ref=server_name,
+            change_type="delete",
+            before_json=before,
+            after_json=result,
+            changed_by=changed_by,
+        )
+        return result
+
+    async def test_mcp_server(self, server_name: str) -> dict[str, Any]:
+        try:
+            return await self.tools.test_mcp_server(server_name)
+        except Exception as exc:
+            raise ValueError(self._public_error(exc)) from exc
+
+    async def refresh_mcp_tools(self, server_name: str, *, changed_by: str) -> dict[str, Any]:
+        before = self.list_mcp_tools(server_name=server_name)
+        try:
+            result = await self.tools.refresh_mcp_tools(server_name)
+        except Exception as exc:
+            raise ValueError(self._public_error(exc)) from exc
+        after = self.list_mcp_tools(server_name=server_name)
+        self._log_config_change(
+            config_domain="mcp_tool",
+            scope_ref=server_name,
+            change_type="refresh",
+            before_json=before,
+            after_json={"result": result, "tools": after},
+            changed_by=changed_by,
+        )
+        return result
+
+    async def install_mcp_preset(self, preset_name: str, *, changed_by: str) -> dict[str, Any]:
+        preset = self.MCP_PRESETS.get(str(preset_name or "").strip())
+        if not preset:
+            raise ValueError("未知 MCP 预设")
+
+        install_logs = self._run_mcp_preset_install_steps(preset)
+        payload = {
+            "server_name": preset["server_name"],
+            "display_name": preset["display_name"],
+            "transport": preset["transport"],
+            "command": preset["command"],
+            "args_json": preset["args_json"],
+            "env_json": preset["env_json"],
+            "url": "",
+            "headers_json": {},
+            "timeout_seconds": preset["timeout_seconds"],
+            "is_enabled": True,
+            "admin_only": preset["admin_only"],
+        }
+        before = self._find_mcp_server(str(preset["server_name"]))
+        if before:
+            server = self.update_mcp_server(str(preset["server_name"]), payload, changed_by=changed_by)
+            action = "update"
+        else:
+            server = self.create_mcp_server(payload, changed_by=changed_by)
+            action = "create"
+
+        try:
+            refresh_result = await self.refresh_mcp_tools(str(preset["server_name"]), changed_by=changed_by)
+        except Exception as exc:
+            raise ValueError(self._public_error(exc)) from exc
+
+        return {
+            "ok": True,
+            "action": action,
+            "server": server,
+            "install_logs": install_logs,
+            "refresh": refresh_result,
+        }
+
+    def list_mcp_tools(self, *, server_name: str = "") -> list[dict[str, Any]]:
+        filters: list[str] = []
+        params: list[Any] = []
+        if server_name:
+            filters.append("t.server_name=%s")
+            params.append(server_name)
+        where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = database.fetch_all(
+            f"""
+            SELECT
+                t.id, t.server_name, t.exposed_tool_name, t.original_tool_name,
+                t.display_name, t.description, t.parameters_json, t.is_enabled,
+                t.admin_only, t.last_seen_at, t.created_at, t.updated_at,
+                s.is_enabled AS server_enabled, s.admin_only AS server_admin_only
+            FROM bot_mcp_tool_cache t
+            INNER JOIN bot_mcp_server_config s ON t.server_name=s.server_name
+            {where_sql}
+            ORDER BY t.server_name ASC, t.original_tool_name ASC
+            """,
+            tuple(params),
+        )
+        for row in rows:
+            row["parameters_json"] = loads_json(
+                str(row.get("parameters_json")) if row.get("parameters_json") is not None else None,
+                {},
+            )
+        return rows
+
+    def list_mcp_tool_call_logs(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        server_name: str = "",
+        exposed_tool_name: str = "",
+        session_type: str = "",
+        session_id: int | None = None,
+        is_success: bool | None = None,
+        start_at: str = "",
+        end_at: str = "",
+    ) -> dict[str, Any]:
+        filters: list[str] = []
+        params: list[Any] = []
+        if server_name:
+            filters.append("server_name=%s")
+            params.append(server_name)
+        if exposed_tool_name:
+            filters.append("exposed_tool_name=%s")
+            params.append(exposed_tool_name)
+        if session_type:
+            filters.append("session_type=%s")
+            params.append(session_type)
+        if session_id is not None:
+            filters.append("session_id=%s")
+            params.append(session_id)
+        if is_success is not None:
+            filters.append("is_success=%s")
+            params.append(1 if is_success else 0)
+        if start_at:
+            filters.append("created_at >= %s")
+            params.append(start_at)
+        if end_at:
+            filters.append("created_at <= %s")
+            params.append(end_at)
+
+        result = self._paged_query(
+            table_sql="FROM bot_mcp_tool_call_log",
+            filters=filters,
+            params=params,
+            order_by="created_at DESC, id DESC",
+            page=page,
+            page_size=page_size,
+            columns=(
+                "id, session_type, session_id, user_id, server_name, exposed_tool_name, "
+                "original_tool_name, arguments_json, result_excerpt, error_text, "
+                "is_success, latency_ms, created_at"
+            ),
+        )
+        for row in result["items"]:
+            row["arguments_json"] = loads_json(
+                str(row.get("arguments_json")) if row.get("arguments_json") is not None else None,
+                {},
+            )
+        return result
+
+    def update_mcp_tool(self, exposed_tool_name: str, payload: dict[str, Any], *, changed_by: str) -> dict[str, Any]:
+        before = self._find_mcp_tool(exposed_tool_name)
+        if not before:
+            raise ValueError("MCP 工具不存在")
+        updates: list[str] = []
+        params: list[Any] = []
+        for field in ["display_name", "description"]:
+            if field in payload:
+                updates.append(f"{field}=%s")
+                params.append(payload[field])
+        if "parameters_json" in payload:
+            updates.append("parameters_json=%s")
+            params.append(dumps_json(payload["parameters_json"]) if payload["parameters_json"] is not None else None)
+        if "is_enabled" in payload:
+            updates.append("is_enabled=%s")
+            params.append(1 if bool(payload["is_enabled"]) else 0)
+        if "admin_only" in payload:
+            updates.append("admin_only=%s")
+            params.append(1 if bool(payload["admin_only"]) else 0)
+        if not updates:
+            return before
+        params.append(exposed_tool_name)
+        database.execute(
+            f"UPDATE bot_mcp_tool_cache SET {', '.join(updates)} WHERE exposed_tool_name=%s",
+            tuple(params),
+        )
+        after = self._find_mcp_tool(exposed_tool_name)
+        self._log_config_change(
+            config_domain="mcp_tool",
+            scope_ref=exposed_tool_name,
+            change_type="update",
+            before_json=before,
+            after_json=after,
+            changed_by=changed_by,
+        )
+        return after or before
 
     def list_admin_users(self) -> list[dict[str, Any]]:
         return self.admin_auth_service.list_admin_users()
@@ -1465,3 +1823,95 @@ class AdminService:
     def _find_tool_config(self, tool_name: str) -> dict[str, Any] | None:
         rows = [item for item in self.list_tools() if str(item.get("tool_name")) == str(tool_name)]
         return rows[0] if rows else None
+
+    def _find_mcp_server(self, server_name: str) -> dict[str, Any] | None:
+        rows = [item for item in self.list_mcp_servers() if str(item.get("server_name")) == str(server_name)]
+        return rows[0] if rows else None
+
+    def _find_mcp_tool(self, exposed_tool_name: str) -> dict[str, Any] | None:
+        rows = [
+            item
+            for item in self.list_mcp_tools()
+            if str(item.get("exposed_tool_name")) == str(exposed_tool_name)
+        ]
+        return rows[0] if rows else None
+
+    def _run_mcp_preset_install_steps(self, preset: dict[str, Any]) -> list[dict[str, Any]]:
+        logs: list[dict[str, Any]] = []
+        repo_path = str(preset.get("prepare_git_repo") or "").strip()
+        if repo_path:
+            self._ensure_git_repo(repo_path, logs)
+        for command in preset.get("install_steps") or []:
+            logs.append(self._run_mcp_preset_command([str(item) for item in command]))
+        return logs
+
+    def _ensure_git_repo(self, repo_path: str, logs: list[dict[str, Any]]) -> None:
+        path = Path(repo_path)
+        if not path.exists():
+            return
+        check = self._run_mcp_preset_command(
+            ["git", "-C", repo_path, "rev-parse", "--is-inside-work-tree"],
+            check=False,
+        )
+        logs.append(check)
+        if check["returncode"] == 0:
+            return
+        logs.append(self._run_mcp_preset_command(["git", "-C", repo_path, "init"]))
+        logs.append(self._run_mcp_preset_command(["git", "-C", repo_path, "config", "user.email", "qqcat@local"]))
+        logs.append(self._run_mcp_preset_command(["git", "-C", repo_path, "config", "user.name", "QQcat"]))
+
+    def _run_mcp_preset_command(self, command: list[str], *, check: bool = True) -> dict[str, Any]:
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=180,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(f"命令不存在，请先安装: {command[0]}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"MCP 安装命令超时: {' '.join(command)}") from exc
+
+        log = {
+            "command": command,
+            "returncode": completed.returncode,
+            "stdout": (completed.stdout or "")[-1000:],
+            "stderr": (completed.stderr or "")[-1000:],
+        }
+        if check and completed.returncode != 0:
+            message = (completed.stderr or completed.stdout or "命令执行失败").strip()
+            raise ValueError(f"MCP 安装失败: {message[-500:]}")
+        return log
+
+    @staticmethod
+    def _validate_mcp_server_name(value: Any) -> str:
+        server_name = str(value or "").strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", server_name):
+            raise ValueError("server_name 仅允许字母数字下划线，且不能数字开头")
+        return server_name
+
+    @staticmethod
+    def _validate_mcp_transport(value: Any) -> str:
+        transport = str(value or "").strip().lower()
+        if transport not in {"stdio", "streamable_http"}:
+            raise ValueError("transport 仅支持 stdio 或 streamable_http")
+        return transport
+
+    @staticmethod
+    def _nullable_str(value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
+
+    @staticmethod
+    def _parse_mcp_json_fields(row: dict[str, Any]) -> None:
+        for field, fallback in {
+            "args_json": [],
+            "env_json": {},
+            "headers_json": {},
+        }.items():
+            value = row.get(field)
+            if isinstance(value, (dict, list)):
+                continue
+            row[field] = loads_json(str(value) if value is not None else None, fallback)

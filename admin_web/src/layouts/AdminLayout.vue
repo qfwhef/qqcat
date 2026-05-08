@@ -156,6 +156,7 @@ const fallbackMenus: MenuNode[] = [
   { key: "scheduled-tasks", label: "定时任务", path: "/scheduled-tasks" },
   { key: "runtime", label: "AI 运行配置", path: "/runtime" },
   { key: "tools", label: "工具管理", path: "/tools" },
+  { key: "mcp", label: "MCP 服务", path: "/mcp" },
   { key: "prompts", label: "提示词", path: "/prompts" },
   { key: "access", label: "访问控制", path: "/access" },
   { key: "session-configs", label: "会话配置", path: "/session-configs" },
@@ -235,6 +236,7 @@ const menuIcon = (key: string) => {
   if (normalized === "health") return Monitor;
   if (normalized === "runtime") return SetUp;
   if (normalized === "tools") return Tools;
+  if (normalized === "mcp") return Operation;
   if (normalized === "scheduled-tasks") return Timer;
   if (normalized === "access") return Lock;
   if (normalized === "session-configs") return Operation;

@@ -75,6 +75,7 @@ def get_container() -> AppContainer:
         admin_auth_service=admin_auth_service,
         minecraft_service=minecraft_service,
         scheduled_task_service=scheduled_task_service,
+        tools=tools,
     )
 
     _container = AppContainer(

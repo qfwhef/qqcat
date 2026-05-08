@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import subprocess
@@ -20,6 +21,7 @@ from ..application.secret_service import SecretService, secret_service
 from ..core.config import settings
 from ..core.logging import get_logger
 from ..infrastructure.database import database, dumps_json, loads_json
+from .mcp_client import McpClientManager
 
 logger = get_logger("ToolRegistry")
 ToolHandler = Callable[[dict[str, Any], Event], Awaitable[dict[str, Any]]]
@@ -33,6 +35,7 @@ class ToolDefinition:
     handler: ToolHandler
     tool_type: str = "builtin"
     display_name: str | None = None
+    admin_only: bool = False
 
 
 class ToolRegistry:
@@ -104,7 +107,9 @@ except Exception as exc:  # noqa: BLE001
     def __init__(self, secret_service_instance: SecretService | None = None) -> None:
         self._builtin_tools: dict[str, ToolDefinition] = {}
         self.secret_service = secret_service_instance or secret_service
+        self.mcp_client = McpClientManager()
         self._ensure_tool_table()
+        self._ensure_mcp_tables()
         self._register_builtin_tools()
         self._seed_builtin_rows()
 
@@ -165,6 +170,84 @@ except Exception as exc:  # noqa: BLE001
                 continue
             database.execute(f"ALTER TABLE bot_tool_config {ddl}", ())
             logger.info("已补齐工具表字段: %s", column_name)
+
+    def _ensure_mcp_tables(self) -> None:
+        database.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_mcp_server_config (
+                id BIGINT NOT NULL AUTO_INCREMENT,
+                server_name VARCHAR(64) NOT NULL,
+                display_name VARCHAR(128) NULL,
+                transport VARCHAR(32) NOT NULL,
+                command TEXT NULL,
+                args_json JSON NULL,
+                env_json JSON NULL,
+                url TEXT NULL,
+                headers_json JSON NULL,
+                timeout_seconds INT UNSIGNED NOT NULL DEFAULT 15,
+                is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                admin_only TINYINT(1) NOT NULL DEFAULT 1,
+                last_status VARCHAR(32) NULL,
+                last_error TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uk_mcp_server_name (server_name),
+                KEY idx_mcp_server_enabled (is_enabled)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 服务配置表'
+            """,
+            (),
+        )
+        database.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_mcp_tool_cache (
+                id BIGINT NOT NULL AUTO_INCREMENT,
+                server_name VARCHAR(64) NOT NULL,
+                exposed_tool_name VARCHAR(64) NOT NULL,
+                original_tool_name VARCHAR(128) NOT NULL,
+                display_name VARCHAR(128) NULL,
+                description TEXT NOT NULL,
+                parameters_json JSON NULL,
+                is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                admin_only TINYINT(1) NOT NULL DEFAULT 1,
+                last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uk_mcp_exposed_tool_name (exposed_tool_name),
+                UNIQUE KEY uk_mcp_server_original_tool (server_name, original_tool_name),
+                KEY idx_mcp_tool_enabled (is_enabled),
+                KEY idx_mcp_tool_server (server_name)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 工具缓存表'
+            """,
+            (),
+        )
+        database.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_mcp_tool_call_log (
+                id BIGINT NOT NULL AUTO_INCREMENT,
+                session_type VARCHAR(16) NOT NULL,
+                session_id BIGINT NOT NULL,
+                user_id BIGINT NULL,
+                server_name VARCHAR(64) NOT NULL,
+                exposed_tool_name VARCHAR(64) NOT NULL,
+                original_tool_name VARCHAR(128) NOT NULL,
+                arguments_json JSON NULL,
+                result_excerpt MEDIUMTEXT NULL,
+                error_text TEXT NULL,
+                is_success TINYINT(1) NOT NULL DEFAULT 1,
+                latency_ms INT UNSIGNED NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_mcp_call_time (created_at),
+                KEY idx_mcp_call_server_time (server_name, created_at),
+                KEY idx_mcp_call_tool_time (exposed_tool_name, created_at),
+                KEY idx_mcp_call_session_time (session_type, session_id, created_at),
+                KEY idx_mcp_call_success_time (is_success, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 工具调用日志表'
+            """,
+            (),
+        )
 
     def _seed_builtin_rows(self) -> None:
         for definition in self._builtin_tools.values():
@@ -272,6 +355,8 @@ except Exception as exc:  # noqa: BLE001
         definition = self._get_runtime_tools().get(tool_name)
         if not definition:
             return {"ok": False, "error": f"Unknown or disabled tool: {tool_name}"}
+        if definition.admin_only and not self._is_admin_event(event):
+            return {"ok": False, "tool": tool_name, "error": "该工具仅管理员可用"}
 
         try:
             arguments = json.loads(arguments_json) if arguments_json else {}
@@ -336,6 +421,20 @@ except Exception as exc:  # noqa: BLE001
                 handler=self._make_python_handler(dict(row)),
                 tool_type="python",
             )
+        for row in self._load_enabled_mcp_tool_rows():
+            tool_name = str(row["exposed_tool_name"])
+            runtime_tools[tool_name] = ToolDefinition(
+                name=tool_name,
+                display_name=str(row.get("display_name") or row.get("original_tool_name") or tool_name),
+                description=str(row.get("description") or ""),
+                parameters=self._tool_parameters(
+                    {"parameters_json": row.get("parameters_json")},
+                    {"type": "object", "properties": {}, "additionalProperties": True},
+                ),
+                handler=self._make_mcp_handler(dict(row)),
+                tool_type="mcp",
+                admin_only=bool(row.get("admin_only")) or bool(row.get("server_admin_only")),
+            )
         return runtime_tools
 
     def _load_tool_rows(self) -> dict[str, dict[str, Any]]:
@@ -355,6 +454,26 @@ except Exception as exc:  # noqa: BLE001
         for row in rows:
             result[str(row["tool_name"])] = row
         return result
+
+    def _load_enabled_mcp_tool_rows(self) -> list[dict[str, Any]]:
+        rows = database.fetch_all(
+            """
+            SELECT
+                t.id, t.server_name, t.exposed_tool_name, t.original_tool_name,
+                t.display_name, t.description, t.parameters_json,
+                t.is_enabled, t.admin_only, t.last_seen_at, t.created_at, t.updated_at,
+                s.transport, s.command, s.args_json, s.env_json, s.url, s.headers_json,
+                s.timeout_seconds, s.is_enabled AS server_enabled, s.admin_only AS server_admin_only
+            FROM bot_mcp_tool_cache t
+            INNER JOIN bot_mcp_server_config s ON t.server_name=s.server_name
+            WHERE t.is_enabled=1 AND s.is_enabled=1
+            ORDER BY t.server_name ASC, t.original_tool_name ASC
+            """,
+            (),
+        )
+        for row in rows:
+            self._parse_mcp_config_json_fields(row)
+        return rows
 
     @staticmethod
     def _tool_parameters(row: dict[str, Any] | None, fallback: dict[str, Any]) -> dict[str, Any]:
@@ -377,6 +496,12 @@ except Exception as exc:  # noqa: BLE001
         async def handler(arguments: dict[str, Any], event: Event) -> dict[str, Any]:
             _ = event
             return await asyncio.to_thread(self._execute_python_tool, row, arguments)
+
+        return handler
+
+    def _make_mcp_handler(self, row: dict[str, Any]) -> ToolHandler:
+        async def handler(arguments: dict[str, Any], event: Event) -> dict[str, Any]:
+            return await self._execute_mcp_tool(row, arguments, event)
 
         return handler
 
@@ -481,6 +606,245 @@ except Exception as exc:  # noqa: BLE001
             "allow_network": allow_network,
             "data": wrapper.get("result"),
         }
+
+    async def _execute_mcp_tool(self, row: dict[str, Any], arguments: dict[str, Any], event: Event) -> dict[str, Any]:
+        config = self._mcp_config_from_tool_row(row)
+        started_at = time.perf_counter()
+        server_name = str(row.get("server_name") or "")
+        original_tool_name = str(row.get("original_tool_name") or "")
+        exposed_tool_name = str(row.get("exposed_tool_name") or "")
+        try:
+            result = await self.mcp_client.call_tool(
+                config,
+                tool_name=original_tool_name,
+                arguments=arguments,
+            )
+            runtime_ms = int((time.perf_counter() - started_at) * 1000)
+            self._log_mcp_tool_call(
+                event=event,
+                server_name=server_name,
+                exposed_tool_name=exposed_tool_name,
+                original_tool_name=original_tool_name,
+                arguments=arguments,
+                is_success=True,
+                latency_ms=runtime_ms,
+                result=result,
+                error_text=None,
+            )
+            return {
+                "server_name": server_name,
+                "original_tool_name": original_tool_name,
+                "runtime_ms": runtime_ms,
+                "data": result,
+            }
+        except Exception as exc:
+            runtime_ms = int((time.perf_counter() - started_at) * 1000)
+            self._log_mcp_tool_call(
+                event=event,
+                server_name=server_name,
+                exposed_tool_name=exposed_tool_name,
+                original_tool_name=original_tool_name,
+                arguments=arguments,
+                is_success=False,
+                latency_ms=runtime_ms,
+                result=None,
+                error_text=str(exc),
+            )
+            raise
+
+    async def test_mcp_server(self, server_name: str) -> dict[str, Any]:
+        config = self._load_mcp_server_config(server_name)
+        if not config:
+            raise ValueError("MCP 服务不存在")
+        started_at = time.perf_counter()
+        try:
+            tools = await self.mcp_client.list_tools(config)
+            self._update_mcp_server_status(server_name, "ok", None)
+            return {
+                "ok": True,
+                "server_name": server_name,
+                "tool_count": len(tools),
+                "tools": tools,
+                "latency_ms": int((time.perf_counter() - started_at) * 1000),
+            }
+        except Exception as exc:
+            self._update_mcp_server_status(server_name, "error", str(exc)[:500])
+            raise
+
+    async def refresh_mcp_tools(self, server_name: str) -> dict[str, Any]:
+        result = await self.test_mcp_server(server_name)
+        tools = result.get("tools") or []
+        if not isinstance(tools, list):
+            tools = []
+        seen_names: set[str] = set()
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            original_name = str(tool.get("name") or "").strip()
+            if not original_name:
+                continue
+            exposed_name = self._make_mcp_exposed_tool_name(server_name, original_name)
+            seen_names.add(original_name)
+            description = str(tool.get("description") or "")
+            parameters = tool.get("input_schema") or {"type": "object", "properties": {}, "additionalProperties": True}
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}, "additionalProperties": True}
+            database.execute(
+                """
+                INSERT INTO bot_mcp_tool_cache(
+                    server_name, exposed_tool_name, original_tool_name, display_name,
+                    description, parameters_json, is_enabled, admin_only, last_seen_at
+                ) VALUES(%s, %s, %s, %s, %s, %s, 1, 1, NOW())
+                ON DUPLICATE KEY UPDATE
+                    exposed_tool_name=VALUES(exposed_tool_name),
+                    display_name=VALUES(display_name),
+                    description=VALUES(description),
+                    parameters_json=VALUES(parameters_json),
+                    last_seen_at=VALUES(last_seen_at)
+                """,
+                (
+                    server_name,
+                    exposed_name,
+                    original_name,
+                    original_name,
+                    description,
+                    dumps_json(parameters),
+                ),
+            )
+        return {
+            **result,
+            "refreshed_count": len(seen_names),
+        }
+
+    def _load_mcp_server_config(self, server_name: str) -> dict[str, Any] | None:
+        row = database.fetch_one(
+            """
+            SELECT
+                server_name, display_name, transport, command, args_json, env_json,
+                url, headers_json, timeout_seconds, is_enabled, admin_only,
+                last_status, last_error, created_at, updated_at
+            FROM bot_mcp_server_config
+            WHERE server_name=%s
+            LIMIT 1
+            """,
+            (server_name,),
+        )
+        if not row:
+            return None
+        self._parse_mcp_config_json_fields(row)
+        return row
+
+    @staticmethod
+    def _parse_mcp_config_json_fields(row: dict[str, Any]) -> None:
+        for field, fallback in {
+            "args_json": [],
+            "env_json": {},
+            "headers_json": {},
+            "parameters_json": {},
+        }.items():
+            if field not in row:
+                continue
+            value = row.get(field)
+            if isinstance(value, (dict, list)):
+                continue
+            row[field] = loads_json(str(value) if value is not None else None, fallback)
+
+    @staticmethod
+    def _mcp_config_from_tool_row(row: dict[str, Any]) -> dict[str, Any]:
+        config = dict(row)
+        ToolRegistry._parse_mcp_config_json_fields(config)
+        return config
+
+    @staticmethod
+    def _make_mcp_exposed_tool_name(server_name: str, original_name: str) -> str:
+        def slug(value: str) -> str:
+            normalized = re.sub(r"[^A-Za-z0-9_]+", "_", value.strip())
+            normalized = re.sub(r"_+", "_", normalized).strip("_").lower()
+            return normalized or "tool"
+
+        base = f"mcp_{slug(server_name)}_{slug(original_name)}"
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", base):
+            return base
+        digest = hashlib.sha1(f"{server_name}:{original_name}".encode("utf-8")).hexdigest()[:8]
+        trimmed = base[: 64 - 9].rstrip("_")
+        if not trimmed or trimmed[0].isdigit():
+            trimmed = f"mcp_{trimmed}"[: 64 - 9].rstrip("_")
+        return f"{trimmed}_{digest}"
+
+    @staticmethod
+    def _update_mcp_server_status(server_name: str, status_text: str, error_text: str | None) -> None:
+        database.execute(
+            """
+            UPDATE bot_mcp_server_config
+            SET last_status=%s, last_error=%s
+            WHERE server_name=%s
+            """,
+            (status_text, error_text, server_name),
+        )
+
+    @staticmethod
+    def _log_mcp_tool_call(
+        *,
+        event: Event,
+        server_name: str,
+        exposed_tool_name: str,
+        original_tool_name: str,
+        arguments: dict[str, Any],
+        is_success: bool,
+        latency_ms: int,
+        result: Any,
+        error_text: str | None,
+    ) -> None:
+        try:
+            group_id = getattr(event, "group_id", None)
+            user_id = int(getattr(event, "user_id", 0) or 0)
+            session_type = "group" if group_id not in {None, ""} else "private"
+            session_id = int(group_id or user_id or 0)
+            result_excerpt = ToolRegistry._truncate_debug_json(result, 4000) if result is not None else None
+            database.execute(
+                """
+                INSERT INTO bot_mcp_tool_call_log(
+                    session_type, session_id, user_id, server_name, exposed_tool_name,
+                    original_tool_name, arguments_json, result_excerpt, error_text,
+                    is_success, latency_ms
+                ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    session_type,
+                    session_id,
+                    user_id,
+                    server_name,
+                    exposed_tool_name,
+                    original_tool_name,
+                    ToolRegistry._truncate_debug_json(arguments, 8000),
+                    result_excerpt,
+                    str(error_text or "")[:2000] if error_text else None,
+                    1 if is_success else 0,
+                    latency_ms,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MCP 工具调用日志写入失败: %s", exc)
+
+    @staticmethod
+    def _truncate_debug_json(value: Any, limit: int) -> str:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+        if len(text) <= limit:
+            return text
+        return json.dumps({"_truncated": True, "excerpt": text[:limit]}, ensure_ascii=False)
+
+    @staticmethod
+    def _is_admin_event(event: Event) -> bool:
+        user_id = int(getattr(event, "user_id", 0) or 0)
+        if user_id <= 0:
+            return False
+        if user_id == int(settings.admin_uid or 0):
+            return True
+        row = database.fetch_one(
+            "SELECT user_id FROM bot_admin_user WHERE user_id=%s AND is_active=1 LIMIT 1",
+            (user_id,),
+        )
+        return bool(row)
 
     @staticmethod
     def _append_query_params(url: str, arguments: dict[str, Any]) -> str:

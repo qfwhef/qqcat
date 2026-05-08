@@ -83,6 +83,48 @@ CREATE TABLE IF NOT EXISTS bot_tool_config (
     KEY idx_tool_type_enabled (tool_type, is_enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具配置表';
 
+CREATE TABLE IF NOT EXISTS bot_mcp_server_config (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    server_name VARCHAR(64) NOT NULL COMMENT 'MCP 服务唯一标识',
+    display_name VARCHAR(128) NULL COMMENT '显示名称',
+    transport VARCHAR(32) NOT NULL COMMENT '传输类型：stdio/streamable_http',
+    command TEXT NULL COMMENT 'stdio 启动命令',
+    args_json JSON NULL COMMENT 'stdio 命令参数',
+    env_json JSON NULL COMMENT 'stdio 环境变量',
+    url TEXT NULL COMMENT 'streamable_http 服务地址',
+    headers_json JSON NULL COMMENT 'HTTP 请求头',
+    timeout_seconds INT UNSIGNED NOT NULL DEFAULT 15 COMMENT '连接和调用超时秒数',
+    is_enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+    admin_only TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否仅管理员可用',
+    last_status VARCHAR(32) NULL COMMENT '最近连接状态',
+    last_error TEXT NULL COMMENT '最近错误',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_mcp_server_name (server_name),
+    KEY idx_mcp_server_enabled (is_enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 服务配置表';
+
+CREATE TABLE IF NOT EXISTS bot_mcp_tool_cache (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    server_name VARCHAR(64) NOT NULL COMMENT 'MCP 服务唯一标识',
+    exposed_tool_name VARCHAR(64) NOT NULL COMMENT '暴露给模型的工具名',
+    original_tool_name VARCHAR(128) NOT NULL COMMENT 'MCP 原始工具名',
+    display_name VARCHAR(128) NULL COMMENT '显示名称',
+    description TEXT NOT NULL COMMENT '工具说明',
+    parameters_json JSON NULL COMMENT 'OpenAI tools 参数 schema',
+    is_enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
+    admin_only TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否仅管理员可用',
+    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最近发现时间',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_mcp_exposed_tool_name (exposed_tool_name),
+    UNIQUE KEY uk_mcp_server_original_tool (server_name, original_tool_name),
+    KEY idx_mcp_tool_enabled (is_enabled),
+    KEY idx_mcp_tool_server (server_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 工具缓存表';
+
 CREATE TABLE IF NOT EXISTS bot_scheduled_task (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
     name VARCHAR(128) NOT NULL COMMENT '任务名称',
@@ -264,6 +306,28 @@ CREATE TABLE IF NOT EXISTS bot_ai_call_log (
     KEY idx_ai_call_stage_time (stage, created_at),
     KEY idx_ai_call_model_time (model_name, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 调用与回滚日志表';
+
+CREATE TABLE IF NOT EXISTS bot_mcp_tool_call_log (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+    session_type VARCHAR(16) NOT NULL COMMENT '会话类型：group/private',
+    session_id BIGINT NOT NULL COMMENT '群号或用户QQ',
+    user_id BIGINT NULL COMMENT '触发工具调用的用户QQ',
+    server_name VARCHAR(64) NOT NULL COMMENT 'MCP 服务名',
+    exposed_tool_name VARCHAR(64) NOT NULL COMMENT '暴露给模型的工具名',
+    original_tool_name VARCHAR(128) NOT NULL COMMENT 'MCP 原始工具名',
+    arguments_json JSON NULL COMMENT '模型传入参数',
+    result_excerpt MEDIUMTEXT NULL COMMENT '返回结果摘要',
+    error_text TEXT NULL COMMENT '失败原因',
+    is_success TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否成功',
+    latency_ms INT UNSIGNED NULL COMMENT '耗时毫秒',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    KEY idx_mcp_call_time (created_at),
+    KEY idx_mcp_call_server_time (server_name, created_at),
+    KEY idx_mcp_call_tool_time (exposed_tool_name, created_at),
+    KEY idx_mcp_call_session_time (session_type, session_id, created_at),
+    KEY idx_mcp_call_success_time (is_success, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 工具调用日志表';
 
 CREATE TABLE IF NOT EXISTS bot_config_change_log (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
