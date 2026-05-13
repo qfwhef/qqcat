@@ -85,13 +85,55 @@
           </el-form-item>
           <div class="model-grid">
             <el-form-item label="文本模型" class="connection-form-item">
-              <el-input v-model="form.text_model" />
+              <el-select
+                v-model="form.text_model"
+                filterable
+                allow-create
+                default-first-option
+                placeholder="选择或输入文本模型"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="model in textModelOptions"
+                  :key="model"
+                  :label="model"
+                  :value="model"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item label="视觉模型" class="connection-form-item">
-              <el-input v-model="form.vision_model" />
+              <el-select
+                v-model="form.vision_model"
+                filterable
+                allow-create
+                default-first-option
+                placeholder="选择或输入视觉模型"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="model in visionModelOptions"
+                  :key="model"
+                  :label="model"
+                  :value="model"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item label="生图模型" class="connection-form-item">
-              <el-input v-model="form.image_model" placeholder="例如 gpt-image-2" />
+              <el-select
+                v-model="form.image_model"
+                filterable
+                allow-create
+                default-first-option
+                placeholder="选择或输入生图模型"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="model in imageModelOptions"
+                  :key="model"
+                  :label="model"
+                  :value="model"
+                />
+              </el-select>
             </el-form-item>
           </div>
           <div class="fallback-head">
@@ -221,6 +263,31 @@ const visionFallbackRaw = ref('')
 const minecraftNotifyGroupsRaw = ref('')
 const lastUpdatedAt = ref<Date | null>(null)
 const aiTestResult = ref<any | null>(null)
+
+const textModelOptions = [
+  'gpt-5.4-mini',
+  'gpt-5.4',
+  'gpt-5.2',
+  'qwen/qwen3.6-plus:free',
+  'bytedance-seed/dola-seed-2.0-pro:free',
+  'x-ai/grok-code-fast-1:optimized:free',
+  'kilo-auto/free',
+  'openrouter/free',
+]
+
+const visionModelOptions = [
+  'gpt-5.4-mini',
+  'gpt-5.4',
+  'gpt-5.2',
+  'qwen/qwen3.6-plus:free',
+  'bytedance-seed/dola-seed-2.0-pro:free',
+  'openrouter/free',
+]
+
+const imageModelOptions = [
+  'gpt-image-2',
+  'gpt-image-1',
+]
 
 const form = reactive({
   ai_base_url: '',
