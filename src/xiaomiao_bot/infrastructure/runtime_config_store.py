@@ -58,6 +58,7 @@ RUNTIME_COLUMN_MAP = {
     "ai_base_url": "ai_base_url",
     "text_model": "text_model",
     "vision_model": "vision_model",
+    "image_model": "image_model",
     "text_model_fallback": "text_model_fallback_json",
     "vision_model_fallback": "vision_model_fallback_json",
     CFG_DEFAULT_REPLY_RATE: "default_reply_rate",
@@ -76,6 +77,8 @@ RUNTIME_COLUMN_MAP = {
 class RuntimeConfigStore:
     """Global runtime configuration persisted in MySQL."""
 
+    _runtime_columns_checked = False
+
     DEFAULTS: dict[str, Any] = {
         CFG_DEFAULT_REPLY_RATE: settings.default_reply_rate,
         CFG_BLOCKED_GROUPS: settings.blocked_groups,
@@ -87,6 +90,7 @@ class RuntimeConfigStore:
         CFG_SUMMARY_COOLDOWN_SECONDS: 90,
         CFG_SUMMARY_MIN_NEW_MESSAGES: 12,
         CFG_ENABLE_TOOLS: True,
+        "image_model": settings.image_model,
         CFG_PROMPT_BASE: DEFAULT_PROMPT_BASE,
         CFG_PROMPT_LOGIC_PRIVATE: DEFAULT_PROMPT_LOGIC_PRIVATE,
         CFG_PROMPT_LOGIC_AT_ME: DEFAULT_PROMPT_LOGIC_AT_ME,
@@ -188,6 +192,7 @@ class RuntimeConfigStore:
             "ai_base_url": row.get("ai_base_url") or settings.base_url,
             "text_model": row.get("text_model") or settings.text_model,
             "vision_model": row.get("vision_model") or settings.vision_model,
+            "image_model": row.get("image_model") or settings.image_model,
             "text_model_fallback": text_model_fallback
             if isinstance(text_model_fallback, list)
             else settings.text_model_fallback,
@@ -230,6 +235,9 @@ class RuntimeConfigStore:
     def get_vision_model(self) -> str:
         return str(self.get_runtime_snapshot()["vision_model"])
 
+    def get_image_model(self) -> str:
+        return str(self.get_runtime_snapshot()["image_model"])
+
     def get_text_model_fallback(self) -> list[str]:
         return [str(item) for item in self.get_runtime_snapshot()["text_model_fallback"]]
 
@@ -242,6 +250,7 @@ class RuntimeConfigStore:
         return self.DEFAULTS.get(key)
 
     def _get_active_runtime_row(self) -> dict[str, Any] | None:
+        self._ensure_runtime_columns()
         return database.fetch_one(
             """
             SELECT *
@@ -254,6 +263,7 @@ class RuntimeConfigStore:
         )
 
     def _upsert_runtime_row(self, updates: dict[str, Any]) -> None:
+        self._ensure_runtime_columns()
         row = self._get_active_runtime_row()
         if row:
             assignments = ", ".join(f"{column}=%s" for column in updates)
@@ -273,6 +283,7 @@ class RuntimeConfigStore:
             "ai_base_url": settings.base_url,
             "text_model": settings.text_model,
             "vision_model": settings.vision_model,
+            "image_model": settings.image_model,
             "text_model_fallback_json": dumps_json(settings.text_model_fallback),
             "vision_model_fallback_json": dumps_json(settings.vision_model_fallback),
             "enable_tools": 1,
@@ -291,12 +302,12 @@ class RuntimeConfigStore:
         database.execute(
             """
             INSERT INTO bot_ai_runtime_config(
-                config_scope, scope_ref, ai_base_url, text_model, vision_model,
+                config_scope, scope_ref, ai_base_url, text_model, vision_model, image_model,
                 text_model_fallback_json, vision_model_fallback_json, enable_tools,
                 enable_summary_memory, summary_only_group, summary_trigger_rounds,
                 summary_keep_recent_messages, summary_cooldown_seconds, summary_min_new_messages, default_reply_rate,
                 max_history, log_level, is_active, version
-            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)
             """,
             (
                 payload["config_scope"],
@@ -304,6 +315,7 @@ class RuntimeConfigStore:
                 payload["ai_base_url"],
                 payload["text_model"],
                 payload["vision_model"],
+                payload["image_model"],
                 payload["text_model_fallback_json"],
                 payload["vision_model_fallback_json"],
                 payload["enable_tools"],
@@ -319,6 +331,35 @@ class RuntimeConfigStore:
             ),
         )
         logger.info("已创建 AI 运行时配置记录")
+
+    def _ensure_runtime_columns(self) -> None:
+        if self._runtime_columns_checked:
+            return
+        row = database.fetch_one(
+            """
+            SELECT COUNT(*) AS total
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = %s
+              AND COLUMN_NAME = %s
+            """,
+            ("bot_ai_runtime_config", "image_model"),
+        )
+        if not row or int(row.get("total") or 0) == 0:
+            try:
+                database.execute(
+                    """
+                    ALTER TABLE bot_ai_runtime_config
+                    ADD COLUMN image_model VARCHAR(128) NULL COMMENT '主生图模型'
+                    AFTER vision_model
+                    """,
+                    (),
+                )
+                logger.info("已补齐 AI 运行时配置字段: image_model")
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+        self._runtime_columns_checked = True
 
     def update_runtime_settings(self, payload: dict[str, Any]) -> None:
         updates: dict[str, Any] = {}

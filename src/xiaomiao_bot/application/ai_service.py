@@ -381,8 +381,7 @@ class AIService:
     ) -> tuple[bool, str]:
         is_private = self._is_private_event(event)
         history = self.session_store.get_history(event)
-        image_urls = self.parser.extract_image_urls(event)
-        prepared_image_urls = await self._prepare_image_inputs(image_urls)
+        direct_image_urls = self.parser.extract_image_urls(event)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if self._is_group_event(event):
             user_id = int(getattr(event, "user_id", 0) or 0)
@@ -390,7 +389,12 @@ class AIService:
             context_msg = f"[{timestamp}][{identity}]: {msg}"
         else:
             context_msg = f"[{timestamp}][{user_name}]: {msg}"
-        context_msg = await self._describe_images_in_context(context_msg)
+        image_urls = self._merge_image_urls(
+            direct_image_urls,
+            self._extract_image_marker_urls(context_msg),
+        )
+        prepared_image_urls = await self._prepare_image_inputs(image_urls)
+        context_msg = await self._describe_images_in_context(context_msg, skip_urls=image_urls)
         user_message_row_id = self.session_store.append_user_message(event, context_msg, is_at_bot=is_at_me)
         history = self.session_store.get_history(event)
         history = await self._summarize_if_needed(event, history, is_private)
@@ -616,6 +620,77 @@ class AIService:
             logger.error("AI处理失败: %s", exc)
             raise
 
+    async def generate_image(
+        self,
+        event: Event,
+        prompt: str,
+        user_name: str,
+        is_at_me: bool,
+    ) -> tuple[str, str]:
+        prompt = prompt.strip()
+        if not prompt:
+            raise ValueError("生图提示词为空")
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if self._is_group_event(event):
+            user_id = int(getattr(event, "user_id", 0) or 0)
+            identity = f"{user_name}|{user_id}" if user_id > 0 else user_name
+            context_msg = f"[{timestamp}][{identity}]: /image {prompt}"
+        else:
+            context_msg = f"[{timestamp}][{user_name}]: /image {prompt}"
+        user_message_row_id = self.session_store.append_user_message(
+            event,
+            context_msg,
+            is_at_bot=is_at_me,
+        )
+
+        model = self.runtime_config_store.get_image_model().strip()
+        if not model:
+            raise ValueError("生图模型未配置")
+
+        logger.info("正在请求生图模型: model=%s prompt=%s", model, prompt[:120])
+        started_at = time.perf_counter()
+        try:
+            response = await self._create_image_generation(prompt=prompt, model=model)
+            image_file = self._extract_generated_image_file(response)
+            if not image_file:
+                raise EmptyModelResponseError("image model returned empty image")
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            self.session_store.log_ai_call(
+                event,
+                stage="image-generate",
+                model_name=model,
+                fallback_index=0,
+                allow_tools=False,
+                is_success=True,
+                latency_ms=latency_ms,
+                request_excerpt=prompt[:500],
+                message_row_id=user_message_row_id,
+            )
+            self.session_store.append_assistant_message(
+                event,
+                f"[图片:AI生成] 提示词：{prompt}",
+                model_name=model,
+            )
+            logger.info("生图完成: model=%s latency_ms=%s", model, latency_ms)
+            return image_file, model
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - started_at) * 1000)
+            self.session_store.log_ai_call(
+                event,
+                stage="image-generate",
+                model_name=model,
+                fallback_index=0,
+                allow_tools=False,
+                is_success=False,
+                failure_reason=self._classify_failure(exc),
+                latency_ms=latency_ms,
+                request_excerpt=prompt[:500],
+                message_row_id=user_message_row_id,
+            )
+            logger.error("生图失败: model=%s reason=%s detail=%s", model, self._classify_failure(exc), exc)
+            raise
+
     async def _retry_with_fallback(
         self,
         event: Event,
@@ -814,6 +889,25 @@ class AIService:
         return prepared
 
     @staticmethod
+    def _extract_image_marker_urls(text: str) -> list[str]:
+        urls: list[str] = []
+        for url in re.findall(r"\[图片:([^\]]+)\]", text):
+            normalized = url.strip()
+            if normalized and normalized not in urls:
+                urls.append(normalized)
+        return urls
+
+    @staticmethod
+    def _merge_image_urls(*groups: list[str]) -> list[str]:
+        merged: list[str] = []
+        for group in groups:
+            for url in group:
+                normalized = str(url).strip()
+                if normalized and normalized not in merged:
+                    merged.append(normalized)
+        return merged
+
+    @staticmethod
     def _build_request_excerpt(messages: list[dict[str, Any]]) -> str:
         for item in reversed(messages):
             content = item.get("content")
@@ -876,6 +970,98 @@ class AIService:
                 ):
                     raise ToolArgsNotSupportedError(str(exc)) from exc
                 raise
+
+    async def _create_image_generation(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        max_retries: int = 2,
+    ) -> Any:
+        retry_count = 0
+        image_size = settings.image_generation_size.strip()
+        while retry_count <= max_retries:
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "prompt": prompt,
+                "n": 1,
+            }
+            if image_size:
+                kwargs["size"] = image_size
+            try:
+                try:
+                    return await self._get_openai_client().images.generate(**kwargs)
+                except TypeError as exc:
+                    err_text = str(exc).lower()
+                    if "unexpected keyword argument" in err_text and "size" in err_text:
+                        kwargs.pop("size", None)
+                        return await self._get_openai_client().images.generate(**kwargs)
+                    raise
+            except (RateLimitError, APIStatusError) as exc:
+                err_text = str(exc).lower()
+                if image_size and self._is_unsupported_image_size_error(err_text):
+                    logger.warning("生图接口拒绝 size 参数，已移除 size 后重试: model=%s", model)
+                    image_size = ""
+                    continue
+                if "429" in err_text or "thrott" in err_text:
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        raise
+                    await asyncio.sleep(1.2**retry_count)
+                    continue
+                raise
+
+    @classmethod
+    def _extract_generated_image_file(cls, response: Any) -> str:
+        data = cls._get_response_value(response, "data")
+        if not data:
+            return ""
+        first = data[0] if isinstance(data, list) and data else None
+        if first is None:
+            return ""
+        image_url = cls._get_response_value(first, "url")
+        if image_url:
+            return cls._normalize_generated_image_file(str(image_url))
+        image_b64 = cls._get_response_value(first, "b64_json")
+        if image_b64:
+            return cls._normalize_generated_image_file(str(image_b64))
+        return ""
+
+    @staticmethod
+    def _get_response_value(target: Any, key: str) -> Any:
+        if isinstance(target, dict):
+            return target.get(key)
+        return getattr(target, key, None)
+
+    @staticmethod
+    def _normalize_generated_image_file(value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            return ""
+        if normalized.startswith("base64://"):
+            return normalized
+        if normalized.startswith("data:image") and "," in normalized:
+            return f"base64://{normalized.split(',', 1)[1]}"
+        if re.match(r"^[A-Za-z0-9+/=\s]+$", normalized) and len(normalized) > 200:
+            compact = re.sub(r"\s+", "", normalized)
+            return f"base64://{compact}"
+        return normalized
+
+    @staticmethod
+    def _is_unsupported_image_size_error(err_text: str) -> bool:
+        if "size" not in err_text:
+            return False
+        return any(
+            token in err_text
+            for token in (
+                "unsupported",
+                "not support",
+                "unrecognized",
+                "unknown parameter",
+                "unexpected",
+                "invalid",
+            )
+        )
 
     async def _run_tool_calls(
         self,
@@ -945,9 +1131,10 @@ class AIService:
             return context_msg
         skip_set = set(skip_urls or [])
         for url in urls:
-            if url in skip_set:
-                continue
             replacement = "[图片]"
+            if url in skip_set:
+                context_msg = context_msg.replace(f"[图片:{url}]", replacement, 1)
+                continue
             prepared_url = await self.image_cache_store.resolve_for_model(url) or url
             vision_messages = [
                 {

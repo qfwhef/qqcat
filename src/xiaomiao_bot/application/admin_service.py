@@ -388,6 +388,7 @@ class AdminService:
                 "ai_base_url": runtime.get("ai_base_url"),
                 "text_model": runtime.get("text_model"),
                 "vision_model": runtime.get("vision_model"),
+                "image_model": runtime.get("image_model"),
                 "enable_tools": bool(runtime.get("enable_tools")),
                 "enable_summary_memory": bool(runtime.get("enable_summary_memory")),
             },

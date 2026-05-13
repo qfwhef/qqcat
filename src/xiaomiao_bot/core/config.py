@@ -70,6 +70,8 @@ class Settings:
 
     text_model: str = os.getenv("TEXT_MODEL", "qwen/qwen3.6-plus:free")
     vision_model: str = os.getenv("VISION_MODEL", "qwen/qwen3.6-plus:free")
+    image_model: str = os.getenv("IMAGE_MODEL", "gpt-image-2")
+    image_generation_size: str = os.getenv("IMAGE_GENERATION_SIZE", "1024x1024")
     text_model_fallback: list[str] = field(
         default_factory=lambda: _parse_str_list(os.getenv("TEXT_MODEL_FALLBACK", ""))
         or [

@@ -48,6 +48,7 @@ class RuntimeConfigPayload(BaseModel):
     ai_base_url: str | None = None
     text_model: str | None = None
     vision_model: str | None = None
+    image_model: str | None = None
     text_model_fallback: list[str] | None = None
     vision_model_fallback: list[str] | None = None
     default_reply_rate: int | None = Field(default=None, ge=0, le=100)

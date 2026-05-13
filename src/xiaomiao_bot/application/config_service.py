@@ -40,6 +40,7 @@ class ConfigService:
             "ai_base_url": runtime_snapshot["ai_base_url"],
             "text_model": runtime_snapshot["text_model"],
             "vision_model": runtime_snapshot["vision_model"],
+            "image_model": runtime_snapshot["image_model"],
             "text_model_fallback": runtime_snapshot["text_model_fallback"],
             "vision_model_fallback": runtime_snapshot["vision_model_fallback"],
             "max_history": runtime_snapshot["max_history"],

@@ -18,6 +18,7 @@ NapCat(Docker) -> OneBot WebSocket -> NoneBot(Python虚拟环境) -> 管理后�
 - 连续触发防抖：连续 @、私聊、拍一拍时只回复最后一次触发
 - 聊天记忆和摘要压缩
 - 图片识别与图片描述
+- QQ 群聊 `/image 提示词` 生图并返回图片
 - 工具调用
   - 内置工具
   - 后台新增 HTTP 工具
@@ -293,6 +294,8 @@ AI_API_KEY=你的key
 AI_BASE_URL=你的baseurl
 TEXT_MODEL=你的文本模型
 VISION_MODEL=你的视觉模型
+IMAGE_MODEL=你的生图模型
+IMAGE_GENERATION_SIZE=1024x1024
 TEXT_MODEL_FALLBACK=备用模型1,备用模型2
 VISION_MODEL_FALLBACK=备用模型1,备用模型2
 ```
@@ -420,6 +423,7 @@ http://127.0.0.1:8080/admin-ui/login
 可以改：
 
 - 主模型
+- 生图模型
 - 备用模型
 - 默认回复率
 - 工具总开关

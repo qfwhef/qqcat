@@ -90,6 +90,9 @@
             <el-form-item label="视觉模型" class="connection-form-item">
               <el-input v-model="form.vision_model" />
             </el-form-item>
+            <el-form-item label="生图模型" class="connection-form-item">
+              <el-input v-model="form.image_model" placeholder="例如 gpt-image-2" />
+            </el-form-item>
           </div>
           <div class="fallback-head">
             <div class="fallback-head-item">
@@ -223,6 +226,7 @@ const form = reactive({
   ai_base_url: '',
   text_model: '',
   vision_model: '',
+  image_model: '',
   default_reply_rate: 100,
   enable_tools: true,
   enable_summary_memory: true,
@@ -262,6 +266,7 @@ const loadData = async () => {
     form.ai_base_url = data.ai_base_url || ''
     form.text_model = data.text_model || ''
     form.vision_model = data.vision_model || ''
+    form.image_model = data.image_model || ''
     form.default_reply_rate = Number(data.default_reply_rate ?? 100)
     form.enable_tools = Boolean(data.enable_tools)
     form.enable_summary_memory = Boolean(data.enable_summary_memory)

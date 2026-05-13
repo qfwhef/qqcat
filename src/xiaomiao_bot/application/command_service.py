@@ -20,11 +20,12 @@ class CommandService:
     def parse_command(self, msg: str) -> tuple[str | None, str | None]:
         if not msg.startswith("/"):
             return None, None
-        parts = msg[1:].split()
-        if not parts:
+        command_text = msg[1:].strip()
+        if not command_text:
             return None, None
-        cmd = parts[0].lower()
-        args = parts[1] if len(parts) > 1 else None
+        cmd, _, raw_args = command_text.partition(" ")
+        cmd = cmd.lower()
+        args = raw_args.strip() or None
         logger.info("⚙️ 收到命令: /%s %s", cmd, args or "")
         return cmd, args
 
@@ -38,8 +39,9 @@ class CommandService:
             logger.info("🌞 机器人已唤醒")
             return "我醒啦！开始工作喵！"
         if cmd == "rate":
-            if args and args.isdigit():
-                rate = max(0, min(100, int(args)))
+            rate_arg = args.split()[0] if args else ""
+            if rate_arg.isdigit():
+                rate = max(0, min(100, int(rate_arg)))
                 self.session_store.set_reply_rate(event, rate)
                 logger.info("📊 回复率已设置为: %s%%", rate)
                 return f"回复率已设为: {rate}%"

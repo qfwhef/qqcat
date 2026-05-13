@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS bot_ai_runtime_config (
     ai_base_url VARCHAR(255) NULL COMMENT '模型服务基础地址',
     text_model VARCHAR(128) NOT NULL COMMENT '主文本模型',
     vision_model VARCHAR(128) NOT NULL COMMENT '主视觉模型',
+    image_model VARCHAR(128) NULL COMMENT '主生图模型',
     text_model_fallback_json JSON NULL COMMENT '文本模型回滚列表',
     vision_model_fallback_json JSON NULL COMMENT '视觉模型回滚列表',
     enable_tools TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用工具调用',

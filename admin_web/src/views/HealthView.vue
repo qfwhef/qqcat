@@ -71,6 +71,10 @@
           <code>{{ runtime.vision_model || "-" }}</code>
         </div>
         <div>
+          <span>生图模型</span>
+          <code>{{ runtime.image_model || "-" }}</code>
+        </div>
+        <div>
           <span>摘要记忆</span>
           <code>{{ runtime.enable_summary_memory ? "开启" : "关闭" }}</code>
         </div>

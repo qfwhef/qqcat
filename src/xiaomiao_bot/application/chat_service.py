@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 
-from nonebot.adapters.onebot.v11 import Bot, Event, Message
+from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment
 from nonebot.exception import FinishedException
 
 from ..adapters.onebot import MessageParser, build_at_message, build_expression_message, enrich_reply_context
@@ -147,7 +147,8 @@ class ChatService:
     async def is_command_event(self, bot: Bot, event: Event) -> bool:
         _ = bot
         msg = await self.parser.parse_message(bot, event)
-        return msg.startswith("/") and bool(msg[1:].split())
+        command_msg = self._strip_leading_bot_mention(msg)
+        return command_msg.startswith("/") and bool(command_msg[1:].split())
 
     async def run_in_session_queue(
         self,
@@ -229,8 +230,12 @@ class ChatService:
             logger.info("ℹ️ 消息解析后为空且未@机器人，跳过处理")
             return ChatHandleResult()
 
-        cmd, args = self.command_service.parse_command(msg)
+        user_name = self.parser.get_user_name(event)
+        command_msg = self._strip_leading_bot_mention(msg)
+        cmd, args = self.command_service.parse_command(command_msg)
         if cmd:
+            if cmd in {"image", "img", "生图", "画图"}:
+                return await self._handle_image_command(event, args, user_name, is_at_me)
             try:
                 reply = await self.command_service.execute(event, cmd, args)
                 if reply is not None:
@@ -242,7 +247,6 @@ class ChatService:
             logger.info("😴 当前会话处于睡眠状态，跳过回复")
             return ChatHandleResult()
 
-        user_name = self.parser.get_user_name(event)
         decision = self._decide_reply(bot, event, msg, is_at_me)
         if not decision.should_reply:
             self._append_silent_user_message(event, msg, user_name, is_at_me)
@@ -289,6 +293,10 @@ class ChatService:
     @staticmethod
     def _is_private_event(event: Event) -> bool:
         return getattr(event, "group_id", None) in {None, ""}
+
+    @staticmethod
+    def _strip_leading_bot_mention(msg: str) -> str:
+        return re.sub(r"^\s*@小喵\s*", "", msg, count=1).strip()
 
     def _decide_reply(self, bot: Bot, event: Event, msg: str, is_at_me: bool) -> _ReplyDecision:
         """Decide whether a normal message deserves an AI response."""
@@ -508,6 +516,44 @@ class ChatService:
         if self._is_private_event(event):
             return Message(reply_content)
         return build_at_message(reply_content)
+
+    async def _handle_image_command(
+        self,
+        event: Event,
+        args: str | None,
+        user_name: str,
+        is_at_me: bool,
+    ) -> ChatHandleResult:
+        prompt = (args or "").strip()
+        if not prompt:
+            return ChatHandleResult(
+                should_finish=True,
+                finish_text="请在 /image 后面写提示词，例如：/image 一只坐在月亮上的白猫",
+            )
+        try:
+            image_file, _ = await self.ai_service.generate_image(
+                event,
+                prompt,
+                user_name,
+                is_at_me,
+            )
+        except Exception as exc:
+            logger.error("处理 /image 命令失败: %s", exc)
+            return ChatHandleResult(
+                should_finish=True,
+                finish_text="生图失败了，请稍后再试或检查生图模型配置。",
+            )
+        return ChatHandleResult(
+            should_send=True,
+            send_message=self._build_image_message(image_file),
+        )
+
+    @staticmethod
+    def _build_image_message(image_file: str) -> Message:
+        msg = Message()
+        msg += MessageSegment.text("生成好了：\n")
+        msg += MessageSegment.image(image_file)
+        return msg
 
     def _build_quick_reply_message(self, event: Event, quick_reply: _QuickReply) -> Message:
         return build_expression_message(
