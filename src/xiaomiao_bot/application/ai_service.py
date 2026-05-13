@@ -1009,22 +1009,87 @@ class AIService:
                         raise
                     await asyncio.sleep(1.2**retry_count)
                     continue
+                if self._should_try_responses_image_generation(err_text):
+                    responses_model = self._select_responses_image_model(model)
+                    logger.warning(
+                        "生图接口拒绝 Images API 调用，尝试 Responses image_generation 工具: image_model=%s responses_model=%s",
+                        model,
+                        responses_model,
+                    )
+                    return await self._create_image_generation_via_responses(
+                        prompt=prompt,
+                        model=responses_model,
+                    )
                 raise
+
+    async def _create_image_generation_via_responses(self, *, prompt: str, model: str) -> Any:
+        responses = getattr(self._get_openai_client(), "responses", None)
+        create = getattr(responses, "create", None)
+        if create is None:
+            raise RuntimeError("当前 OpenAI SDK 不支持 Responses API 生图工具")
+        return await create(
+            model=model,
+            input=prompt,
+            tools=[{"type": "image_generation"}],
+        )
+
+    def _select_responses_image_model(self, image_model: str) -> str:
+        text_model = self.runtime_config_store.get_text_model().strip()
+        if text_model and text_model != image_model:
+            return text_model
+        fallback_models = self.runtime_config_store.get_text_model_fallback()
+        for fallback_model in fallback_models:
+            fallback_model = str(fallback_model).strip()
+            if fallback_model and fallback_model != image_model:
+                return fallback_model
+        return text_model or image_model
 
     @classmethod
     def _extract_generated_image_file(cls, response: Any) -> str:
         data = cls._get_response_value(response, "data")
-        if not data:
+        if data:
+            first = data[0] if isinstance(data, list) and data else None
+            if first is not None:
+                image_url = cls._get_response_value(first, "url")
+                if image_url:
+                    return cls._normalize_generated_image_file(str(image_url))
+                image_b64 = cls._get_response_value(first, "b64_json")
+                if image_b64:
+                    return cls._normalize_generated_image_file(str(image_b64))
+        output = cls._get_response_value(response, "output")
+        if isinstance(output, list):
+            for item in output:
+                image_file = cls._extract_generated_image_from_output_item(item)
+                if image_file:
+                    return image_file
+        return ""
+
+    @classmethod
+    def _extract_generated_image_from_output_item(cls, item: Any) -> str:
+        item_type = str(cls._get_response_value(item, "type") or "").lower()
+        if item_type and "image" not in item_type:
+            content = cls._get_response_value(item, "content")
+            if isinstance(content, list):
+                for block in content:
+                    image_file = cls._extract_generated_image_from_output_item(block)
+                    if image_file:
+                        return image_file
             return ""
-        first = data[0] if isinstance(data, list) and data else None
-        if first is None:
-            return ""
-        image_url = cls._get_response_value(first, "url")
-        if image_url:
-            return cls._normalize_generated_image_file(str(image_url))
-        image_b64 = cls._get_response_value(first, "b64_json")
-        if image_b64:
-            return cls._normalize_generated_image_file(str(image_b64))
+        for key in ("result", "b64_json", "image_base64", "base64", "url", "image_url"):
+            value = cls._get_response_value(item, key)
+            if value:
+                if isinstance(value, dict):
+                    image_file = cls._extract_generated_image_from_output_item(value)
+                    if image_file:
+                        return image_file
+                else:
+                    return cls._normalize_generated_image_file(str(value))
+        content = cls._get_response_value(item, "content")
+        if isinstance(content, list):
+            for block in content:
+                image_file = cls._extract_generated_image_from_output_item(block)
+                if image_file:
+                    return image_file
         return ""
 
     @staticmethod
@@ -1062,6 +1127,18 @@ class AIService:
                 "invalid",
             )
         )
+
+    @staticmethod
+    def _should_try_responses_image_generation(err_text: str) -> bool:
+        if "image_generation" in err_text or "image generation" in err_text:
+            return True
+        if "tool choice" in err_text and "image" in err_text:
+            return True
+        if "gpt-image" in err_text and ("is only" in err_text or "only support" in err_text):
+            return True
+        if "gpt-image" in err_text and "503" in err_text:
+            return True
+        return False
 
     async def _run_tool_calls(
         self,
