@@ -21,6 +21,9 @@ async def handle_chat(bot: Bot, event: Event) -> None:
     async def send_result(result: ChatHandleResult) -> None:
         if result.should_finish:
             await chat.finish(result.finish_text)
+        if result.should_send and result.send_messages:
+            for message in result.send_messages:
+                await chat.send(message)
         if result.should_send and result.send_message is not None:
             await chat.send(result.send_message)
 
@@ -48,6 +51,9 @@ async def handle_poke(bot: Bot, event: Event) -> None:
     async def send_result(result: ChatHandleResult) -> None:
         if result.should_finish:
             await poke.finish(result.finish_text)
+        if result.should_send and result.send_messages:
+            for message in result.send_messages:
+                await poke.send(message)
         if result.should_send and result.send_message is not None:
             await poke.send(result.send_message)
 

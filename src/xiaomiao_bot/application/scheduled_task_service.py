@@ -13,8 +13,9 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from nonebot import get_bot
 
-from ..adapters.onebot import build_at_message
+from ..adapters.onebot import build_text_messages
 from ..application.ai_service import AIService
+from ..core.config import settings
 from ..core.logging import get_logger
 from ..infrastructure.database import database, dumps_json, loads_json
 
@@ -347,7 +348,21 @@ class ScheduledTaskService:
                     )
                     if not should_reply or not reply_content:
                         raise RuntimeError(f"任务 {task['name']} 未生成群聊回复")
-                    await bot.send_group_msg(group_id=int(target_id), message=build_at_message(reply_content))
+                    messages = build_text_messages(
+                        reply_content,
+                        max_chars=settings.qq_message_chunk_chars,
+                        parse_at=True,
+                    )
+                    if len(messages) > 1:
+                        logger.info(
+                            "定时任务群消息已分段: task_id=%s target=%s chars=%s chunks=%s",
+                            task_id,
+                            target_id,
+                            len(reply_content),
+                            len(messages),
+                        )
+                    for message in messages:
+                        await bot.send_group_msg(group_id=int(target_id), message=message)
                 else:
                     display_name = self._lookup_display_name("private", int(target_id))
                     event = _ScheduledTaskEvent(
@@ -364,7 +379,21 @@ class ScheduledTaskService:
                     )
                     if not should_reply or not reply_content:
                         raise RuntimeError(f"任务 {task['name']} 未生成私聊回复")
-                    await bot.send_private_msg(user_id=int(target_id), message=reply_content)
+                    messages = build_text_messages(
+                        reply_content,
+                        max_chars=settings.qq_message_chunk_chars,
+                        parse_at=False,
+                    )
+                    if len(messages) > 1:
+                        logger.info(
+                            "定时任务私聊消息已分段: task_id=%s target=%s chars=%s chunks=%s",
+                            task_id,
+                            target_id,
+                            len(reply_content),
+                            len(messages),
+                        )
+                    for message in messages:
+                        await bot.send_private_msg(user_id=int(target_id), message=message)
             success = True
         except Exception as exc:  # noqa: BLE001
             error_message = str(exc)

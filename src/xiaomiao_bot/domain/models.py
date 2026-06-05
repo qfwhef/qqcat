@@ -27,6 +27,7 @@ class ChatHandleResult:
     finish_text: str = ""
     should_send: bool = False
     send_message: Message | None = None
+    send_messages: list[Message] | None = None
 
 
 HistoryItem = dict[str, Any]

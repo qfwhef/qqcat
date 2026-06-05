@@ -8,6 +8,8 @@ from typing import Any
 
 from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment
 
+from ...core.text_splitting import split_text_chunks
+
 
 def build_at_message(reply_content: str) -> Message:
     msg = Message()
@@ -41,6 +43,13 @@ def build_expression_message(
         path = Path(image_path).resolve()
         msg += MessageSegment.image(path.as_uri())
     return msg
+
+
+def build_text_messages(reply_content: str, *, max_chars: int, parse_at: bool = True) -> list[Message]:
+    chunks = split_text_chunks(reply_content, max_chars=max_chars)
+    if parse_at:
+        return [build_at_message(chunk) for chunk in chunks]
+    return [Message(chunk) for chunk in chunks]
 
 
 async def enrich_reply_context(bot: Bot, event: Event, msg: str) -> str:
