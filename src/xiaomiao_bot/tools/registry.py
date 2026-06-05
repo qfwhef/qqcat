@@ -20,6 +20,7 @@ from nonebot.adapters.onebot.v11 import Event
 from ..application.secret_service import SecretService, secret_service
 from ..core.config import settings
 from ..core.logging import get_logger
+from ..core.ttl_cache import TimedValueCache
 from ..infrastructure.database import database, dumps_json, loads_json
 from .mcp_client import McpClientManager
 from .mcp_descriptions import localize_mcp_tool
@@ -109,6 +110,9 @@ except Exception as exc:  # noqa: BLE001
         self._builtin_tools: dict[str, ToolDefinition] = {}
         self.secret_service = secret_service_instance or secret_service
         self.mcp_client = McpClientManager()
+        self._runtime_tools_cache: TimedValueCache[dict[str, ToolDefinition]] = TimedValueCache(
+            ttl_seconds=5.0
+        )
         self._ensure_tool_table()
         self._ensure_mcp_tables()
         self._register_builtin_tools()
@@ -381,6 +385,12 @@ except Exception as exc:  # noqa: BLE001
             return {"ok": False, "tool": tool_name, "error": str(exc)}
 
     def _get_runtime_tools(self) -> dict[str, ToolDefinition]:
+        return self._runtime_tools_cache.get(self._build_runtime_tools)
+
+    def clear_runtime_tool_cache(self) -> None:
+        self._runtime_tools_cache.clear()
+
+    def _build_runtime_tools(self) -> dict[str, ToolDefinition]:
         rows = self._load_tool_rows()
         runtime_tools: dict[str, ToolDefinition] = {}
 
@@ -727,6 +737,7 @@ except Exception as exc:  # noqa: BLE001
                     dumps_json(parameters),
                 ),
             )
+        self.clear_runtime_tool_cache()
         return {
             **result,
             "refreshed_count": len(seen_names),
