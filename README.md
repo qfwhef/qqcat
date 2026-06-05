@@ -317,6 +317,14 @@ ADMIN_UID=你的QQ号
 ADMIN_API_TOKEN=你自定义的后台token
 ```
 
+### 5. QQ 发送相关
+
+```env
+QQ_MESSAGE_CHUNK_CHARS=900
+```
+
+- 控制机器人文本回复分段长度，降低 QQ / OneBot 下游截断或拒收超长消息的概率。
+
 ## 第五步：构建管理后台
 
 进入前端目录：

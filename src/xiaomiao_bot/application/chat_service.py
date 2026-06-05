@@ -15,7 +15,7 @@ from typing import TypeVar
 from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment
 from nonebot.exception import FinishedException
 
-from ..adapters.onebot import MessageParser, build_at_message, build_expression_message, build_text_messages, enrich_reply_context
+from ..adapters.onebot import MessageParser, build_expression_message, build_text_messages, enrich_reply_context
 from ..core.config import settings
 from ..core.logging import get_logger
 from ..domain.models import ChatHandleResult
@@ -511,11 +511,6 @@ class ChatService:
                 send_messages=self._build_reply_messages(synthetic_event, reply_content),
             )
         return ChatHandleResult()
-
-    def _build_reply_message(self, event: Event, reply_content: str) -> Message:
-        if self._is_private_event(event):
-            return Message(reply_content)
-        return build_at_message(reply_content)
 
     def _build_reply_messages(self, event: Event, reply_content: str) -> list[Message]:
         messages = build_text_messages(
