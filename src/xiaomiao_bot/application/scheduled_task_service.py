@@ -13,9 +13,11 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from nonebot import get_bot
 
-from ..adapters.onebot import build_at_message
+from ..adapters.onebot import build_text_messages
 from ..application.ai_service import AIService
+from ..core.config import settings
 from ..core.logging import get_logger
+from ..core.message_delivery_stats import build_message_delivery_stats
 from ..infrastructure.database import database, dumps_json, loads_json
 
 logger = get_logger("定时任务")
@@ -347,7 +349,33 @@ class ScheduledTaskService:
                     )
                     if not should_reply or not reply_content:
                         raise RuntimeError(f"任务 {task['name']} 未生成群聊回复")
-                    await bot.send_group_msg(group_id=int(target_id), message=build_at_message(reply_content))
+                    messages = build_text_messages(
+                        reply_content,
+                        max_chars=settings.qq_message_chunk_chars,
+                        parse_at=True,
+                    )
+                    stats = build_message_delivery_stats(messages)
+                    logger.info(
+                        "定时任务群消息发送: task_id=%s target=%s chunks=%s total_chars=%s max_chunk_chars=%s",
+                        task_id,
+                        target_id,
+                        stats.chunk_count,
+                        stats.total_chars,
+                        stats.max_chunk_chars,
+                    )
+                    for index, message in enumerate(messages, start=1):
+                        try:
+                            await bot.send_group_msg(group_id=int(target_id), message=message)
+                        except Exception as exc:
+                            logger.error(
+                                "定时任务群消息发送失败: task_id=%s target=%s chunk=%s/%s error=%s",
+                                task_id,
+                                target_id,
+                                index,
+                                stats.chunk_count,
+                                exc,
+                            )
+                            raise
                 else:
                     display_name = self._lookup_display_name("private", int(target_id))
                     event = _ScheduledTaskEvent(
@@ -364,7 +392,33 @@ class ScheduledTaskService:
                     )
                     if not should_reply or not reply_content:
                         raise RuntimeError(f"任务 {task['name']} 未生成私聊回复")
-                    await bot.send_private_msg(user_id=int(target_id), message=reply_content)
+                    messages = build_text_messages(
+                        reply_content,
+                        max_chars=settings.qq_message_chunk_chars,
+                        parse_at=False,
+                    )
+                    stats = build_message_delivery_stats(messages)
+                    logger.info(
+                        "定时任务私聊消息发送: task_id=%s target=%s chunks=%s total_chars=%s max_chunk_chars=%s",
+                        task_id,
+                        target_id,
+                        stats.chunk_count,
+                        stats.total_chars,
+                        stats.max_chunk_chars,
+                    )
+                    for index, message in enumerate(messages, start=1):
+                        try:
+                            await bot.send_private_msg(user_id=int(target_id), message=message)
+                        except Exception as exc:
+                            logger.error(
+                                "定时任务私聊消息发送失败: task_id=%s target=%s chunk=%s/%s error=%s",
+                                task_id,
+                                target_id,
+                                index,
+                                stats.chunk_count,
+                                exc,
+                            )
+                            raise
             success = True
         except Exception as exc:  # noqa: BLE001
             error_message = str(exc)

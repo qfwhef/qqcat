@@ -15,7 +15,7 @@ from typing import TypeVar
 from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageSegment
 from nonebot.exception import FinishedException
 
-from ..adapters.onebot import MessageParser, build_at_message, build_expression_message, enrich_reply_context
+from ..adapters.onebot import MessageParser, build_expression_message, build_text_messages, enrich_reply_context
 from ..core.config import settings
 from ..core.logging import get_logger
 from ..domain.models import ChatHandleResult
@@ -285,7 +285,7 @@ class ChatService:
             self._remember_group_auto_reply(event, is_at_me)
             return ChatHandleResult(
                 should_send=True,
-                send_message=self._build_reply_message(event, reply_content),
+                send_messages=self._build_reply_messages(event, reply_content),
             )
         logger.info("ℹ️ 本次未生成可发送回复")
         return ChatHandleResult()
@@ -508,14 +508,24 @@ class ChatService:
             logger.info("✅ 拍一拍触发了强制回复")
             return ChatHandleResult(
                 should_send=True,
-                send_message=self._build_reply_message(synthetic_event, reply_content),
+                send_messages=self._build_reply_messages(synthetic_event, reply_content),
             )
         return ChatHandleResult()
 
-    def _build_reply_message(self, event: Event, reply_content: str) -> Message:
-        if self._is_private_event(event):
-            return Message(reply_content)
-        return build_at_message(reply_content)
+    def _build_reply_messages(self, event: Event, reply_content: str) -> list[Message]:
+        messages = build_text_messages(
+            reply_content,
+            max_chars=settings.qq_message_chunk_chars,
+            parse_at=not self._is_private_event(event),
+        )
+        if len(messages) > 1:
+            logger.info(
+                "QQ回复已按长度分段: chars=%s chunks=%s max_chars=%s",
+                len(reply_content),
+                len(messages),
+                settings.qq_message_chunk_chars,
+            )
+        return messages
 
     async def _handle_image_command(
         self,

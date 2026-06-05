@@ -10,6 +10,8 @@ from nonebot import get_bot
 from ..application.secret_service import SecretService, secret_service
 from ..core.config import settings
 from ..core.logging import get_logger
+from ..core.message_delivery_stats import build_message_delivery_stats
+from ..core.text_splitting import split_text_chunks
 from ..infrastructure.database import database, dumps_json, loads_json
 
 logger = get_logger("MinecraftService")
@@ -107,7 +109,27 @@ class MinecraftService:
             f"时间: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         for group_id in target_groups:
-            await bot.send_group_msg(group_id=group_id, message=notify_msg)
+            chunks = split_text_chunks(notify_msg, max_chars=settings.qq_message_chunk_chars)
+            stats = build_message_delivery_stats(chunks)
+            logger.info(
+                "Minecraft通知发送: group_id=%s chunks=%s total_chars=%s max_chunk_chars=%s",
+                group_id,
+                stats.chunk_count,
+                stats.total_chars,
+                stats.max_chunk_chars,
+            )
+            for index, chunk in enumerate(chunks, start=1):
+                try:
+                    await bot.send_group_msg(group_id=group_id, message=chunk)
+                except Exception as exc:
+                    logger.error(
+                        "Minecraft通知发送失败: group_id=%s chunk=%s/%s error=%s",
+                        group_id,
+                        index,
+                        stats.chunk_count,
+                        exc,
+                    )
+                    raise
         return {
             "status": "success",
             "message": f"通知已发送到 {len(target_groups)} 个群",

@@ -18,8 +18,10 @@ from urllib.request import Request, urlopen
 from nonebot.adapters.onebot.v11 import Event
 
 from ..application.secret_service import SecretService, secret_service
+from ..core.async_blocking import run_blocking
 from ..core.config import settings
 from ..core.logging import get_logger
+from ..core.ttl_cache import TimedValueCache
 from ..infrastructure.database import database, dumps_json, loads_json
 from .mcp_client import McpClientManager
 from .mcp_descriptions import localize_mcp_tool
@@ -109,6 +111,9 @@ except Exception as exc:  # noqa: BLE001
         self._builtin_tools: dict[str, ToolDefinition] = {}
         self.secret_service = secret_service_instance or secret_service
         self.mcp_client = McpClientManager()
+        self._runtime_tools_cache: TimedValueCache[dict[str, ToolDefinition]] = TimedValueCache(
+            ttl_seconds=5.0
+        )
         self._ensure_tool_table()
         self._ensure_mcp_tables()
         self._register_builtin_tools()
@@ -381,6 +386,12 @@ except Exception as exc:  # noqa: BLE001
             return {"ok": False, "tool": tool_name, "error": str(exc)}
 
     def _get_runtime_tools(self) -> dict[str, ToolDefinition]:
+        return self._runtime_tools_cache.get(self._build_runtime_tools)
+
+    def clear_runtime_tool_cache(self) -> None:
+        self._runtime_tools_cache.clear()
+
+    def _build_runtime_tools(self) -> dict[str, ToolDefinition]:
         rows = self._load_tool_rows()
         runtime_tools: dict[str, ToolDefinition] = {}
 
@@ -727,6 +738,7 @@ except Exception as exc:  # noqa: BLE001
                     dumps_json(parameters),
                 ),
             )
+        self.clear_runtime_tool_cache()
         return {
             **result,
             "refreshed_count": len(seen_names),
@@ -919,10 +931,14 @@ except Exception as exc:  # noqa: BLE001
         tavily_api_key = self.secret_service.get_secret("TAVILY_API_KEY", settings.tavily_api_key)
         if tavily_api_key:
             try:
-                return self._search_tavily(query, tavily_api_key)
+                return await run_blocking(self._search_tavily, query, tavily_api_key)
             except Exception as exc:
                 logger.warning("Tavily search failed, fallback to Serper: %s", exc)
-        return self._search_serper(query, self.secret_service.get_secret("SERPER_API_KEY", settings.serper_api_key))
+        return await run_blocking(
+            self._search_serper,
+            query,
+            self.secret_service.get_secret("SERPER_API_KEY", settings.serper_api_key),
+        )
 
     def _search_tavily(self, query: str, api_key: str) -> dict[str, Any]:
         payload = json.dumps(
@@ -986,6 +1002,9 @@ except Exception as exc:  # noqa: BLE001
         url = str(arguments.get("url", "")).strip()
         if not url:
             raise ValueError("url is required")
+        return await run_blocking(self._fetch_web_content, url)
+
+    def _fetch_web_content(self, url: str) -> dict[str, Any]:
         request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urlopen(request, timeout=15) as response:
             html = response.read().decode("utf-8", errors="ignore")
@@ -1008,7 +1027,9 @@ except Exception as exc:  # noqa: BLE001
         amap_api_key = self.secret_service.get_secret("AMAP_API_KEY", settings.amap_api_key)
         if not amap_api_key:
             raise ValueError("AMAP_API_KEY is not configured")
+        return await run_blocking(self._get_weather_sync, city, mode, amap_api_key)
 
+    def _get_weather_sync(self, city: str, mode: str, amap_api_key: str) -> dict[str, Any]:
         geo_url = (
             f"https://restapi.amap.com/v3/geocode/geo?address={quote(city)}"
             f"&key={amap_api_key}&output=json"
