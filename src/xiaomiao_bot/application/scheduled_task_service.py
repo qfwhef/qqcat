@@ -17,6 +17,7 @@ from ..adapters.onebot import build_text_messages
 from ..application.ai_service import AIService
 from ..core.config import settings
 from ..core.logging import get_logger
+from ..core.message_delivery_stats import build_message_delivery_stats
 from ..infrastructure.database import database, dumps_json, loads_json
 
 logger = get_logger("定时任务")
@@ -353,16 +354,28 @@ class ScheduledTaskService:
                         max_chars=settings.qq_message_chunk_chars,
                         parse_at=True,
                     )
-                    if len(messages) > 1:
-                        logger.info(
-                            "定时任务群消息已分段: task_id=%s target=%s chars=%s chunks=%s",
-                            task_id,
-                            target_id,
-                            len(reply_content),
-                            len(messages),
-                        )
-                    for message in messages:
-                        await bot.send_group_msg(group_id=int(target_id), message=message)
+                    stats = build_message_delivery_stats(messages)
+                    logger.info(
+                        "定时任务群消息发送: task_id=%s target=%s chunks=%s total_chars=%s max_chunk_chars=%s",
+                        task_id,
+                        target_id,
+                        stats.chunk_count,
+                        stats.total_chars,
+                        stats.max_chunk_chars,
+                    )
+                    for index, message in enumerate(messages, start=1):
+                        try:
+                            await bot.send_group_msg(group_id=int(target_id), message=message)
+                        except Exception as exc:
+                            logger.error(
+                                "定时任务群消息发送失败: task_id=%s target=%s chunk=%s/%s error=%s",
+                                task_id,
+                                target_id,
+                                index,
+                                stats.chunk_count,
+                                exc,
+                            )
+                            raise
                 else:
                     display_name = self._lookup_display_name("private", int(target_id))
                     event = _ScheduledTaskEvent(
@@ -384,16 +397,28 @@ class ScheduledTaskService:
                         max_chars=settings.qq_message_chunk_chars,
                         parse_at=False,
                     )
-                    if len(messages) > 1:
-                        logger.info(
-                            "定时任务私聊消息已分段: task_id=%s target=%s chars=%s chunks=%s",
-                            task_id,
-                            target_id,
-                            len(reply_content),
-                            len(messages),
-                        )
-                    for message in messages:
-                        await bot.send_private_msg(user_id=int(target_id), message=message)
+                    stats = build_message_delivery_stats(messages)
+                    logger.info(
+                        "定时任务私聊消息发送: task_id=%s target=%s chunks=%s total_chars=%s max_chunk_chars=%s",
+                        task_id,
+                        target_id,
+                        stats.chunk_count,
+                        stats.total_chars,
+                        stats.max_chunk_chars,
+                    )
+                    for index, message in enumerate(messages, start=1):
+                        try:
+                            await bot.send_private_msg(user_id=int(target_id), message=message)
+                        except Exception as exc:
+                            logger.error(
+                                "定时任务私聊消息发送失败: task_id=%s target=%s chunk=%s/%s error=%s",
+                                task_id,
+                                target_id,
+                                index,
+                                stats.chunk_count,
+                                exc,
+                            )
+                            raise
             success = True
         except Exception as exc:  # noqa: BLE001
             error_message = str(exc)
