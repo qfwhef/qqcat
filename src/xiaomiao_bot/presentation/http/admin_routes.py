@@ -53,6 +53,7 @@ class RuntimeConfigPayload(BaseModel):
     vision_model_fallback: list[str] | None = None
     default_reply_rate: int | None = Field(default=None, ge=0, le=100)
     enable_tools: bool | None = None
+    enable_image_group: bool | None = None
     enable_summary_memory: bool | None = None
     summary_only_group: bool | None = None
     summary_trigger_rounds: int | None = Field(default=None, ge=1, le=2000)
@@ -79,6 +80,7 @@ class FeaturePayload(BaseModel):
     enable_summary_memory: bool | None = None
     summary_only_group: bool | None = None
     enable_tools: bool | None = None
+    enable_image_group: bool | None = None
 
 
 class PromptPayload(BaseModel):

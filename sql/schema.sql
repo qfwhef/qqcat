@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS bot_ai_runtime_config (
     enable_tools TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用工具调用',
     enable_summary_memory TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用摘要记忆',
     summary_only_group TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否只在群聊启用摘要',
+    enable_image_group TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否在群聊启用生图',
     summary_trigger_rounds INT UNSIGNED NOT NULL DEFAULT 150 COMMENT '摘要触发所需历史消息条数',
     summary_keep_recent_messages INT UNSIGNED NOT NULL DEFAULT 16 COMMENT '摘要后保留的最近消息数',
     summary_cooldown_seconds INT UNSIGNED NOT NULL DEFAULT 90 COMMENT '摘要冷却秒数',

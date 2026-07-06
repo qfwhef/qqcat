@@ -223,6 +223,13 @@
                 </div>
                 <el-switch v-model="form.summary_only_group" />
               </div>
+              <div class="switch-row" :class="{ active: form.enable_image_group }">
+                <div>
+                  <div class="switch-label">群聊生图</div>
+                  <div class="switch-help">允许群聊使用 /image 生图命令</div>
+                </div>
+                <el-switch v-model="form.enable_image_group" />
+              </div>
             </div>
           </div>
         </el-card>
@@ -298,6 +305,7 @@ const form = reactive({
   enable_tools: true,
   enable_summary_memory: true,
   summary_only_group: true,
+  enable_image_group: true,
   summary_trigger_rounds: 150,
   summary_keep_recent_messages: 16,
   summary_cooldown_seconds: 90,
@@ -338,6 +346,7 @@ const loadData = async () => {
     form.enable_tools = Boolean(data.enable_tools)
     form.enable_summary_memory = Boolean(data.enable_summary_memory)
     form.summary_only_group = Boolean(data.summary_only_group)
+    form.enable_image_group = Boolean(data.enable_image_group)
     form.summary_trigger_rounds = Number(data.summary_trigger_rounds ?? 150)
     form.summary_keep_recent_messages = Number(data.summary_keep_recent_messages ?? 16)
     form.summary_cooldown_seconds = Number(data.summary_cooldown_seconds ?? 90)

@@ -17,6 +17,7 @@ from ..core.constants import (
     CFG_BLOCKED_GROUPS,
     CFG_BLOCKED_USERS,
     CFG_DEFAULT_REPLY_RATE,
+    CFG_ENABLE_IMAGE_GROUP,
     CFG_ENABLE_SUMMARY_MEMORY,
     CFG_ENABLE_TOOLS,
     CFG_PROMPT_BASE,
@@ -69,6 +70,7 @@ RUNTIME_COLUMN_MAP = {
     CFG_SUMMARY_COOLDOWN_SECONDS: "summary_cooldown_seconds",
     CFG_SUMMARY_MIN_NEW_MESSAGES: "summary_min_new_messages",
     CFG_ENABLE_TOOLS: "enable_tools",
+    CFG_ENABLE_IMAGE_GROUP: "enable_image_group",
     "max_history": "max_history",
     "log_level": "log_level",
 }
@@ -90,6 +92,7 @@ class RuntimeConfigStore:
         CFG_SUMMARY_COOLDOWN_SECONDS: 90,
         CFG_SUMMARY_MIN_NEW_MESSAGES: 12,
         CFG_ENABLE_TOOLS: True,
+        CFG_ENABLE_IMAGE_GROUP: True,
         "image_model": settings.image_model,
         CFG_PROMPT_BASE: DEFAULT_PROMPT_BASE,
         CFG_PROMPT_LOGIC_PRIVATE: DEFAULT_PROMPT_LOGIC_PRIVATE,
@@ -207,6 +210,9 @@ class RuntimeConfigStore:
             "enable_tools": bool(
                 row.get("enable_tools") if row.get("enable_tools") is not None else True
             ),
+            "enable_image_group": bool(
+                row.get("enable_image_group") if row.get("enable_image_group") is not None else True
+            ),
             "enable_summary_memory": bool(
                 row.get("enable_summary_memory")
                 if row.get("enable_summary_memory") is not None
@@ -287,6 +293,7 @@ class RuntimeConfigStore:
             "text_model_fallback_json": dumps_json(settings.text_model_fallback),
             "vision_model_fallback_json": dumps_json(settings.vision_model_fallback),
             "enable_tools": 1,
+            "enable_image_group": 1,
             "enable_summary_memory": 1,
             "summary_only_group": 1,
             "summary_trigger_rounds": self.DEFAULTS[CFG_SUMMARY_TRIGGER_ROUNDS],
@@ -304,10 +311,10 @@ class RuntimeConfigStore:
             INSERT INTO bot_ai_runtime_config(
                 config_scope, scope_ref, ai_base_url, text_model, vision_model, image_model,
                 text_model_fallback_json, vision_model_fallback_json, enable_tools,
-                enable_summary_memory, summary_only_group, summary_trigger_rounds,
+                enable_image_group, enable_summary_memory, summary_only_group, summary_trigger_rounds,
                 summary_keep_recent_messages, summary_cooldown_seconds, summary_min_new_messages, default_reply_rate,
                 max_history, log_level, is_active, version
-            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)
+            ) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)
             """,
             (
                 payload["config_scope"],
@@ -319,6 +326,7 @@ class RuntimeConfigStore:
                 payload["text_model_fallback_json"],
                 payload["vision_model_fallback_json"],
                 payload["enable_tools"],
+                payload["enable_image_group"],
                 payload["enable_summary_memory"],
                 payload["summary_only_group"],
                 payload["summary_trigger_rounds"],
@@ -359,6 +367,30 @@ class RuntimeConfigStore:
             except Exception as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+        row = database.fetch_one(
+            """
+            SELECT COUNT(*) AS total
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = %s
+              AND COLUMN_NAME = %s
+            """,
+            ("bot_ai_runtime_config", "enable_image_group"),
+        )
+        if not row or int(row.get("total") or 0) == 0:
+            try:
+                database.execute(
+                    """
+                    ALTER TABLE bot_ai_runtime_config
+                    ADD COLUMN enable_image_group TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否在群聊启用生图'
+                    AFTER enable_tools
+                    """,
+                    (),
+                )
+                logger.info("已补齐 AI 运行时配置字段: enable_image_group")
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
         self._runtime_columns_checked = True
 
     def update_runtime_settings(self, payload: dict[str, Any]) -> None:
@@ -373,7 +405,7 @@ class RuntimeConfigStore:
 
     @staticmethod
     def _normalize_runtime_value(column: str, value: Any) -> Any:
-        if column in {"enable_tools", "enable_summary_memory", "summary_only_group"}:
+        if column in {"enable_tools", "enable_image_group", "enable_summary_memory", "summary_only_group"}:
             return 1 if bool(value) else 0
         if column in {"text_model_fallback_json", "vision_model_fallback_json"} and not isinstance(value, str):
             return dumps_json(value)

@@ -534,6 +534,11 @@ class ChatService:
         user_name: str,
         is_at_me: bool,
     ) -> ChatHandleResult:
+        if not self._is_private_event(event) and not self.ai_service.is_image_group_enabled():
+            return ChatHandleResult(
+                should_finish=True,
+                finish_text="群聊已关闭生图功能，请私聊使用 /image 命令",
+            )
         prompt = (args or "").strip()
         if not prompt:
             return ChatHandleResult(

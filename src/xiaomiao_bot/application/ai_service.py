@@ -27,6 +27,7 @@ from ..application.prompt_defaults import (
 from ..core.config import settings
 from ..core.constants import (
     CFG_DEFAULT_REPLY_RATE,
+    CFG_ENABLE_IMAGE_GROUP,
     CFG_ENABLE_SUMMARY_MEMORY,
     CFG_ENABLE_TOOLS,
     CFG_PROMPT_BASE,
@@ -107,6 +108,9 @@ class AIService:
 
     def summary_only_group(self) -> bool:
         return self.runtime_config_store.get_bool(CFG_SUMMARY_ONLY_GROUP, True)
+
+    def is_image_group_enabled(self) -> bool:
+        return self.runtime_config_store.get_bool(CFG_ENABLE_IMAGE_GROUP, True)
 
     def get_summary_trigger_rounds(self) -> int:
         return self.runtime_config_store.get_int(CFG_SUMMARY_TRIGGER_ROUNDS, 150)
