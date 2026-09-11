@@ -33,6 +33,14 @@
             >
               批量删除（{{ selectedRows.length }}）
             </el-button>
+            <el-button
+              type="success"
+              plain
+              :disabled="!selectedDeletedRows.length"
+              @click="handleBatchRestore"
+            >
+              批量恢复（{{ selectedDeletedRows.length }}）
+            </el-button>
           </div>
         </div>
 
@@ -91,6 +99,19 @@
               <el-option label="否" :value="false" />
             </el-select>
           </el-form-item>
+          <el-form-item label="状态">
+            <el-select
+              v-model="filters.is_deleted"
+              clearable
+              placeholder="全部"
+              style="width: 130px"
+              @change="handleSearch"
+            >
+              <el-option label="全部" :value="undefined" />
+              <el-option label="正常" :value="false" />
+              <el-option label="已删除" :value="true" />
+            </el-select>
+          </el-form-item>
           <el-form-item v-if="timePreset === 'custom'" label="开始时间">
             <el-input
               v-model="filters.start_at"
@@ -142,8 +163,21 @@
             <el-table-column prop="message_type" label="类型" width="100" />
             <el-table-column prop="tool_name" label="工具" min-width="120" />
             <el-table-column prop="model_name" label="模型" min-width="160" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tooltip
+                  v-if="row.is_deleted && row.deleted_at"
+                  :content="`删除时间: ${row.deleted_at}`"
+                  placement="top"
+                >
+                  <el-tag type="danger" size="small">已删除</el-tag>
+                </el-tooltip>
+                <el-tag v-else-if="row.is_deleted" type="danger" size="small">已删除</el-tag>
+                <el-tag v-else type="success" size="small">正常</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="created_at" label="时间" min-width="170" />
-            <el-table-column label="操作" width="160" fixed="right">
+            <el-table-column label="操作" width="170" fixed="right">
               <template #default="{ row }">
                 <div style="display: flex; gap: 8px">
                   <el-button link type="info" @click.stop="openDetail(row)"
@@ -153,6 +187,14 @@
                     >编辑</el-button
                   >
                   <el-button
+                    v-if="row.is_deleted"
+                    link
+                    type="success"
+                    @click.stop="handleRestoreRow(row)"
+                    >恢复</el-button
+                  >
+                  <el-button
+                    v-else
                     link
                     type="danger"
                     @click.stop="handleDeleteRow(row)"
@@ -210,6 +252,14 @@
         <el-descriptions-item label="被引平台ID">{{
           currentRow.quoted_platform_message_id || "-"
         }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag :type="currentRow.is_deleted ? 'danger' : 'success'" size="small">
+            {{ currentRow.is_deleted ? "已删除" : "正常" }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="删除时间">
+          {{ currentRow.deleted_at || "-" }}
+        </el-descriptions-item>
       </el-descriptions>
       <el-divider content-position="left">标准化文本</el-divider>
       <pre class="json-block">{{ currentRow?.content_text || "" }}</pre>
@@ -302,6 +352,9 @@ const timePreset = ref<
 >("all");
 const selectedSession = ref<any>(null);
 const selectedRows = ref<any[]>([]);
+const selectedDeletedRows = computed(() =>
+  selectedRows.value.filter((item: any) => item.is_deleted),
+);
 const messagesContentRef = ref<HTMLElement | null>(null);
 const toolbarRef = ref<HTMLElement | null>(null);
 const filterFormRef = ref<any>(null);
@@ -321,6 +374,7 @@ const filters = reactive({
   end_at: "",
   is_reply: undefined as boolean | undefined,
   is_tool: undefined as boolean | undefined,
+  is_deleted: undefined as boolean | undefined,
 });
 const editForm = reactive({
   sender_user_id: undefined as number | undefined,
@@ -571,6 +625,41 @@ const handleBatchDelete = async () => {
     },
   );
   await performDelete(selectedRows.value.map((item) => Number(item.id)));
+};
+
+const performRestore = async (messageIds: number[]) => {
+  if (!filters.session_id || messageIds.length === 0) return;
+  if (activeTab.value === "group") {
+    await adminApi.restoreGroupMessages(Number(filters.session_id), messageIds);
+  } else {
+    await adminApi.restorePrivateMessages(
+      Number(filters.session_id),
+      messageIds,
+    );
+  }
+  ElMessage.success(`已恢复 ${messageIds.length} 条消息`);
+  await loadSessionMenus();
+  await loadMessages();
+};
+
+const handleRestoreRow = async (row: any) => {
+  await ElMessageBox.confirm(`确认恢复消息 #${row.id} 吗？`, "恢复消息", {
+    type: "info",
+  });
+  await performRestore([row.id]);
+};
+
+const handleBatchRestore = async () => {
+  if (!selectedDeletedRows.value.length) return;
+  const ids = selectedDeletedRows.value.map((item: any) => Number(item.id));
+  await ElMessageBox.confirm(
+    `确认批量恢复 ${ids.length} 条已删除消息吗？`,
+    "批量恢复",
+    {
+      type: "info",
+    },
+  );
+  await performRestore(ids);
 };
 
 const handleClearSession = async () => {

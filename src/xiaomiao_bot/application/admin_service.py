@@ -1286,6 +1286,7 @@ class AdminService:
         end_at: str = "",
         is_reply: bool | None = None,
         is_tool: bool | None = None,
+        is_deleted: bool | None = None,
     ) -> dict[str, Any]:
         if session_id is None:
             return {"items": [], "page": max(1, page), "page_size": max(1, min(page_size, 200)), "total": 0}
@@ -1301,6 +1302,7 @@ class AdminService:
             end_at=end_at,
             is_reply=is_reply,
             is_tool=is_tool,
+            is_deleted=is_deleted,
         )
 
     def list_message_sessions(
@@ -1419,6 +1421,32 @@ class AdminService:
         )
         return {
             "deleted_count": deleted,
+            "message_ids": message_ids,
+        }
+
+    def restore_messages(
+        self,
+        *,
+        session_type: str,
+        session_id: int,
+        message_ids: list[int],
+        changed_by: str,
+    ) -> dict[str, Any]:
+        restored = session_store.restore_messages_for_admin(
+            session_type=session_type,
+            session_id=session_id,
+            message_ids=message_ids,
+        )
+        self._log_config_change(
+            config_domain="message_restore",
+            scope_ref=f"{session_type}:{session_id}",
+            change_type="update",
+            before_json={"message_ids": message_ids},
+            after_json={"restored_count": restored, "message_ids": message_ids},
+            changed_by=changed_by,
+        )
+        return {
+            "restored_count": restored,
             "message_ids": message_ids,
         }
 

@@ -965,6 +965,7 @@ async def list_group_messages(
     end_at: str = Query(default=""),
     is_reply: bool | None = Query(default=None),
     is_tool: bool | None = Query(default=None),
+    is_deleted: bool | None = Query(default=None),
 ) -> dict[str, Any]:
     _get_current_admin(request, x_admin_token)
     return get_container().admin_service.list_messages(
@@ -979,6 +980,7 @@ async def list_group_messages(
         end_at=end_at,
         is_reply=is_reply,
         is_tool=is_tool,
+        is_deleted=is_deleted,
     )
 
 
@@ -1030,6 +1032,22 @@ async def delete_group_messages(
 ) -> dict[str, Any]:
     admin = _get_current_admin(request, x_admin_token)
     return get_container().admin_service.delete_messages(
+        session_type="group",
+        session_id=session_id,
+        message_ids=payload.message_ids,
+        changed_by=_changed_by(admin),
+    )
+
+
+@router.post("/messages/group/{session_id}/restore")
+async def restore_group_messages(
+    session_id: int,
+    payload: MessageBatchDeletePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.restore_messages(
         session_type="group",
         session_id=session_id,
         message_ids=payload.message_ids,
@@ -1094,6 +1112,7 @@ async def list_private_messages(
     end_at: str = Query(default=""),
     is_reply: bool | None = Query(default=None),
     is_tool: bool | None = Query(default=None),
+    is_deleted: bool | None = Query(default=None),
 ) -> dict[str, Any]:
     _get_current_admin(request, x_admin_token)
     return get_container().admin_service.list_messages(
@@ -1108,6 +1127,7 @@ async def list_private_messages(
         end_at=end_at,
         is_reply=is_reply,
         is_tool=is_tool,
+        is_deleted=is_deleted,
     )
 
 
@@ -1159,6 +1179,22 @@ async def delete_private_messages(
 ) -> dict[str, Any]:
     admin = _get_current_admin(request, x_admin_token)
     return get_container().admin_service.delete_messages(
+        session_type="private",
+        session_id=session_id,
+        message_ids=payload.message_ids,
+        changed_by=_changed_by(admin),
+    )
+
+
+@router.post("/messages/private/{session_id}/restore")
+async def restore_private_messages(
+    session_id: int,
+    payload: MessageBatchDeletePayload,
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = _get_current_admin(request, x_admin_token)
+    return get_container().admin_service.restore_messages(
         session_type="private",
         session_id=session_id,
         message_ids=payload.message_ids,

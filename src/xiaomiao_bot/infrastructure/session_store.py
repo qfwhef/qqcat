@@ -203,7 +203,7 @@ class SessionStore:
             FROM (
                 SELECT id, role, content_text, model_name, created_at
                 FROM {self._quoted_table_name(table_name)}
-                WHERE id > %s
+                WHERE id > %s AND is_deleted = 0
                 ORDER BY id DESC
                 LIMIT %s
             ) recent
@@ -232,7 +232,7 @@ class SessionStore:
         active_ids = [int(row["id"]) for row in self.get_history_entries(event)]
         if active_ids:
             database.execute(
-                f"DELETE FROM {self._quoted_table_name(table_name)} WHERE id >= %s AND id <= %s",
+                f"UPDATE {self._quoted_table_name(table_name)} SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE id >= %s AND id <= %s",
                 (min(active_ids), max(active_ids)),
             )
         self._sync_message_registry(scope, display_name=self._scope_display_name(scope, event))
@@ -247,16 +247,26 @@ class SessionStore:
 
     def clear_history(self, event: Event) -> None:
         scope = self.get_scope(event)
-        logger.info("清空历史记录: session=%s:%s", scope.session_type, scope.session_id)
+        logger.info("逻辑清空历史记录: session=%s:%s", scope.session_type, scope.session_id)
         message_table = self._message_table(scope)
         summary_table, summary_key = self._summary_table(scope)
         state_table, state_key = self._state_table(scope)
         if message_table:
-            database.execute(f"DELETE FROM {self._quoted_table_name(message_table)}", ())
+            database.execute(
+                f"UPDATE {self._quoted_table_name(message_table)} SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE is_deleted = 0",
+                (),
+            )
             self._sync_message_registry(scope, display_name=self._scope_display_name(scope, event))
-        database.execute(f"DELETE FROM {summary_table} WHERE {summary_key}=%s", (scope.session_id,))
-        database.execute(f"DELETE FROM {state_table} WHERE {state_key}=%s", (scope.session_id,))
-        logger.info("历史记录已清空: session=%s:%s", scope.session_type, scope.session_id)
+        database.execute(f"UPDATE {summary_table} SET is_active = 0 WHERE {summary_key} = %s", (scope.session_id,))
+        database.execute(
+            f"""
+            UPDATE {state_table}
+            SET last_message_id = NULL, last_summary_message_id = NULL, summary_version = 0, summary_cooldown_until = NULL
+            WHERE {state_key} = %s
+            """,
+            (scope.session_id,),
+        )
+        logger.info("历史记录已逻辑清空: session=%s:%s", scope.session_type, scope.session_id)
 
     def get_summary(self, event: Event) -> str:
         scope = self.get_scope(event)
@@ -435,7 +445,51 @@ class SessionStore:
                 """,
                 (),
             )
+            try:
+                registered_tables = database.fetch_all("SELECT table_name FROM bot_message_session_registry", ())
+                for reg in registered_tables:
+                    tname = reg.get("table_name")
+                    if tname:
+                        self._ensure_table_columns_exist(str(tname))
+            except Exception as exc:
+                logger.warning("检查并升级历史会话消息表字段异常: %s", exc)
             self._registry_schema_ready = True
+
+    def _ensure_table_columns_exist(self, table_name: str) -> None:
+        safe_name = self._safe_table_name(table_name)
+        try:
+            col_rows = database.fetch_all(
+                """
+                SELECT COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+                """,
+                (safe_name,),
+            )
+            existing_cols = {row["COLUMN_NAME"] for row in col_rows}
+            if not existing_cols:
+                return
+            if "is_deleted" not in existing_cols:
+                try:
+                    database.execute(
+                        f"ALTER TABLE {self._quoted_table_name(safe_name)} ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否逻辑删除'",
+                        (),
+                    )
+                    logger.info("已为动态表 %s 补充字段 is_deleted", safe_name)
+                except Exception as exc:
+                    logger.warning("为表 %s 添加字段 is_deleted 失败: %s", safe_name, exc)
+            if "deleted_at" not in existing_cols:
+                try:
+                    database.execute(
+                        f"ALTER TABLE {self._quoted_table_name(safe_name)} ADD COLUMN deleted_at DATETIME NULL COMMENT '逻辑删除时间'",
+                        (),
+                    )
+                    logger.info("已为动态表 %s 补充字段 deleted_at", safe_name)
+                except Exception as exc:
+                    logger.warning("为表 %s 添加字段 deleted_at 失败: %s", safe_name, exc)
+        except Exception as exc:
+            logger.warning("查询表 %s 字段信息失败: %s", safe_name, exc)
+
 
     def get_message_table_name(self, session_type: str, session_id: int) -> str | None:
         self.ensure_message_registry_schema()
@@ -472,7 +526,7 @@ class SessionStore:
         total = 0
         for registry in self.list_registered_sessions(session_type):
             table_name = self._safe_table_name(str(registry["table_name"]))
-            sql = f"SELECT COUNT(*) AS total FROM {self._quoted_table_name(table_name)} WHERE created_at >= %s"
+            sql = f"SELECT COUNT(*) AS total FROM {self._quoted_table_name(table_name)} WHERE created_at >= %s AND is_deleted = 0"
             params: tuple[Any, ...] = (since,)
             if role:
                 sql += " AND role=%s"
@@ -495,6 +549,7 @@ class SessionStore:
         end_at: str = "",
         is_reply: bool | None = None,
         is_tool: bool | None = None,
+        is_deleted: bool | None = None,
     ) -> dict[str, Any]:
         table_name = self.get_message_table_name(session_type, session_id)
         safe_page = max(1, page)
@@ -528,6 +583,9 @@ class SessionStore:
         elif is_tool is False:
             filters.append("role<>%s")
             params.append("tool")
+        if is_deleted is not None:
+            filters.append("is_deleted=%s")
+            params.append(1 if is_deleted else 0)
         where_sql = f" WHERE {' AND '.join(filters)}" if filters else ""
         registry = self._registry_row(SessionScope(session_type=session_type, session_id=int(session_id))) or {}
         columns = (
@@ -535,7 +593,8 @@ class SessionStore:
             "sender_user_id, sender_nickname, "
             + ("sender_card, group_name, is_at_bot, " if session_type == "group" else "peer_nickname, ")
             + "is_reply, quoted_platform_message_id, quoted_role, quoted_sender_user_id, "
-            "quoted_sender_nickname, quoted_text, tool_name, tool_args_json, model_name, created_at"
+            "quoted_sender_nickname, quoted_text, tool_name, tool_args_json, model_name, created_at, "
+            "is_deleted, deleted_at"
         )
         count_row = database.fetch_one(
             f"SELECT COUNT(*) AS total FROM {self._quoted_table_name(table_name)}{where_sql}",
@@ -554,6 +613,9 @@ class SessionStore:
         for item in rows:
             if item.get("tool_args_json") is not None:
                 item["tool_args_json"] = self._load_json_like(item["tool_args_json"], {})
+            item["is_deleted"] = bool(item.get("is_deleted"))
+            if item.get("deleted_at"):
+                item["deleted_at"] = str(item["deleted_at"])
             if session_type == "group":
                 item["group_id"] = int(session_id)
                 item["group_name"] = item.get("group_name") or registry.get("display_name")
@@ -582,7 +644,8 @@ class SessionStore:
             "sender_user_id, sender_nickname, "
             + ("sender_card, group_name, is_at_bot, " if session_type == "group" else "peer_nickname, ")
             + "is_reply, quoted_platform_message_id, quoted_role, quoted_sender_user_id, "
-            "quoted_sender_nickname, quoted_text, tool_name, tool_args_json, model_name, created_at"
+            "quoted_sender_nickname, quoted_text, tool_name, tool_args_json, model_name, created_at, "
+            "is_deleted, deleted_at"
         )
         row = database.fetch_one(
             f"""
@@ -597,6 +660,9 @@ class SessionStore:
             return None
         if row.get("tool_args_json") is not None:
             row["tool_args_json"] = self._load_json_like(row["tool_args_json"], {})
+        row["is_deleted"] = bool(row.get("is_deleted"))
+        if row.get("deleted_at"):
+            row["deleted_at"] = str(row["deleted_at"])
         if session_type == "group":
             row["group_id"] = int(session_id)
         else:
@@ -682,7 +748,29 @@ class SessionStore:
             return 0
         placeholders = ", ".join(["%s"] * len(unique_ids))
         affected = database.execute(
-            f"DELETE FROM {self._quoted_table_name(table_name)} WHERE id IN ({placeholders})",
+            f"UPDATE {self._quoted_table_name(table_name)} SET is_deleted=1, deleted_at=CURRENT_TIMESTAMP WHERE id IN ({placeholders}) AND is_deleted=0",
+            tuple(unique_ids),
+        )
+        if affected:
+            scope = SessionScope(session_type=session_type, session_id=int(session_id))
+            self._sync_message_registry(scope)
+            self._refresh_or_clear_last_message_state(scope)
+        return int(affected)
+
+    def restore_messages_for_admin(
+        self,
+        *,
+        session_type: str,
+        session_id: int,
+        message_ids: list[int],
+    ) -> int:
+        table_name = self.get_message_table_name(session_type, session_id)
+        unique_ids = sorted({int(message_id) for message_id in message_ids if message_id is not None})
+        if not table_name or not unique_ids:
+            return 0
+        placeholders = ", ".join(["%s"] * len(unique_ids))
+        affected = database.execute(
+            f"UPDATE {self._quoted_table_name(table_name)} SET is_deleted=0, deleted_at=NULL WHERE id IN ({placeholders}) AND is_deleted=1",
             tuple(unique_ids),
         )
         if affected:
@@ -704,14 +792,24 @@ class SessionStore:
         deleted_count = 0
         if table_name:
             row = database.fetch_one(
-                f"SELECT COUNT(*) AS total FROM {self._quoted_table_name(table_name)}",
+                f"SELECT COUNT(*) AS total FROM {self._quoted_table_name(table_name)} WHERE is_deleted=0",
                 (),
             )
             deleted_count = int(row["total"] or 0) if row else 0
-            database.execute(f"DELETE FROM {self._quoted_table_name(table_name)}", ())
+            database.execute(
+                f"UPDATE {self._quoted_table_name(table_name)} SET is_deleted=1, deleted_at=CURRENT_TIMESTAMP WHERE is_deleted=0",
+                (),
+            )
             self._sync_message_registry(scope)
-        database.execute(f"DELETE FROM {summary_table} WHERE {summary_key}=%s", (scope.session_id,))
-        database.execute(f"DELETE FROM {state_table} WHERE {state_key}=%s", (scope.session_id,))
+        database.execute(f"UPDATE {summary_table} SET is_active=0 WHERE {summary_key}=%s", (scope.session_id,))
+        database.execute(
+            f"""
+            UPDATE {state_table}
+            SET last_message_id=NULL, last_summary_message_id=NULL, summary_version=0, summary_cooldown_until=NULL
+            WHERE {state_key}=%s
+            """,
+            (scope.session_id,),
+        )
         self._refresh_or_clear_last_message_state(scope)
         return deleted_count
 
@@ -1053,7 +1151,7 @@ class SessionStore:
         if not table_name:
             return None
         row = database.fetch_one(
-            f"SELECT MAX(id) AS last_id FROM {self._quoted_table_name(table_name)}",
+            f"SELECT MAX(id) AS last_id FROM {self._quoted_table_name(table_name)} WHERE is_deleted = 0",
             (),
         )
         if not row or row.get("last_id") is None:
@@ -1233,10 +1331,13 @@ class SessionStore:
                         tool_name VARCHAR(64) NULL COMMENT '工具名称',
                         tool_args_json JSON NULL COMMENT '工具参数',
                         model_name VARCHAR(128) NULL COMMENT '本条消息使用的模型',
+                        is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否逻辑删除',
+                        deleted_at DATETIME NULL COMMENT '逻辑删除时间',
                         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间',
                         PRIMARY KEY (id),
                         UNIQUE KEY uk_platform_message (platform_message_id),
                         KEY idx_message_time (created_at),
+                        KEY idx_deleted_time (is_deleted, created_at),
                         KEY idx_sender_time (sender_user_id, created_at),
                         KEY idx_role_time (role, created_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='群聊动态消息表'
@@ -1265,16 +1366,20 @@ class SessionStore:
                         tool_name VARCHAR(64) NULL COMMENT '工具名称',
                         tool_args_json JSON NULL COMMENT '工具参数',
                         model_name VARCHAR(128) NULL COMMENT '本条消息使用的模型',
+                        is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否逻辑删除',
+                        deleted_at DATETIME NULL COMMENT '逻辑删除时间',
                         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间',
                         PRIMARY KEY (id),
                         UNIQUE KEY uk_platform_message (platform_message_id),
                         KEY idx_message_time (created_at),
+                        KEY idx_deleted_time (is_deleted, created_at),
                         KEY idx_sender_time (sender_user_id, created_at),
                         KEY idx_role_time (role, created_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='私聊动态消息表'
                     """,
                     (),
                 )
+            self._ensure_table_columns_exist(safe_name)
             self._known_tables.add(safe_name)
 
     def _sync_message_registry(

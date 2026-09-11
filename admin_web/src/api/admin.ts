@@ -157,6 +157,9 @@ export const adminApi = {
   deleteGroupMessages(sessionId: number, messageIds: number[]) {
     return http.post(`/messages/group/${sessionId}/batch-delete`, { message_ids: messageIds }).then((res) => res.data)
   },
+  restoreGroupMessages(sessionId: number, messageIds: number[]) {
+    return http.post(`/messages/group/${sessionId}/restore`, { message_ids: messageIds }).then((res) => res.data)
+  },
   clearGroupMessages(sessionId: number) {
     return http.post(`/messages/group/${sessionId}/clear`).then((res) => res.data)
   },
@@ -177,6 +180,9 @@ export const adminApi = {
   },
   deletePrivateMessages(sessionId: number, messageIds: number[]) {
     return http.post(`/messages/private/${sessionId}/batch-delete`, { message_ids: messageIds }).then((res) => res.data)
+  },
+  restorePrivateMessages(sessionId: number, messageIds: number[]) {
+    return http.post(`/messages/private/${sessionId}/restore`, { message_ids: messageIds }).then((res) => res.data)
   },
   clearPrivateMessages(sessionId: number) {
     return http.post(`/messages/private/${sessionId}/clear`).then((res) => res.data)

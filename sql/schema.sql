@@ -248,6 +248,9 @@ CREATE TABLE IF NOT EXISTS bot_message_session_registry (
 -- 1. 群聊：bot_group_message_<group_id>
 -- 2. 私聊：bot_private_message_<user_id>
 -- 表结构由应用首次写入消息时自动创建，并登记到 bot_message_session_registry。
+-- 动态消息表包含核心字段：id, platform_message_id, sender_user_id, sender_nickname, role, message_type,
+-- content_text, raw_message_json, is_deleted (TINYINT(1) DEFAULT 0), deleted_at (DATETIME NULL), created_at 等。
+
 
 CREATE TABLE IF NOT EXISTS bot_group_summary (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
