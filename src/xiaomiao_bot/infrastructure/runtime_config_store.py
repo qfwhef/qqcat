@@ -71,6 +71,12 @@ RUNTIME_COLUMN_MAP = {
     CFG_SUMMARY_MIN_NEW_MESSAGES: "summary_min_new_messages",
     CFG_ENABLE_TOOLS: "enable_tools",
     CFG_ENABLE_IMAGE_GROUP: "enable_image_group",
+    "enable_thinking": "enable_thinking",
+    "max_tokens": "max_tokens",
+    "temperature": "temperature",
+    "top_p": "top_p",
+    "presence_penalty": "presence_penalty",
+    "frequency_penalty": "frequency_penalty",
     "max_history": "max_history",
     "log_level": "log_level",
 }
@@ -93,6 +99,12 @@ class RuntimeConfigStore:
         CFG_SUMMARY_MIN_NEW_MESSAGES: 12,
         CFG_ENABLE_TOOLS: True,
         CFG_ENABLE_IMAGE_GROUP: True,
+        "enable_thinking": False,
+        "max_tokens": 1024,
+        "temperature": None,
+        "top_p": None,
+        "presence_penalty": None,
+        "frequency_penalty": None,
         "image_model": settings.image_model,
         CFG_PROMPT_BASE: DEFAULT_PROMPT_BASE,
         CFG_PROMPT_LOGIC_PRIVATE: DEFAULT_PROMPT_LOGIC_PRIVATE,
@@ -213,6 +225,14 @@ class RuntimeConfigStore:
             "enable_image_group": bool(
                 row.get("enable_image_group") if row.get("enable_image_group") is not None else True
             ),
+            "enable_thinking": bool(
+                row.get("enable_thinking") if row.get("enable_thinking") is not None else False
+            ),
+            "max_tokens": int(row.get("max_tokens")) if row.get("max_tokens") is not None else 1024,
+            "temperature": float(row["temperature"]) if row.get("temperature") is not None else None,
+            "top_p": float(row["top_p"]) if row.get("top_p") is not None else None,
+            "presence_penalty": float(row["presence_penalty"]) if row.get("presence_penalty") is not None else None,
+            "frequency_penalty": float(row["frequency_penalty"]) if row.get("frequency_penalty") is not None else None,
             "enable_summary_memory": bool(
                 row.get("enable_summary_memory")
                 if row.get("enable_summary_memory") is not None
@@ -343,54 +363,37 @@ class RuntimeConfigStore:
     def _ensure_runtime_columns(self) -> None:
         if self._runtime_columns_checked:
             return
-        row = database.fetch_one(
-            """
-            SELECT COUNT(*) AS total
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = %s
-              AND COLUMN_NAME = %s
-            """,
-            ("bot_ai_runtime_config", "image_model"),
-        )
-        if not row or int(row.get("total") or 0) == 0:
-            try:
-                database.execute(
-                    """
-                    ALTER TABLE bot_ai_runtime_config
-                    ADD COLUMN image_model VARCHAR(128) NULL COMMENT '主生图模型'
-                    AFTER vision_model
-                    """,
-                    (),
-                )
-                logger.info("已补齐 AI 运行时配置字段: image_model")
-            except Exception as exc:
-                if "duplicate column" not in str(exc).lower():
-                    raise
-        row = database.fetch_one(
-            """
-            SELECT COUNT(*) AS total
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = %s
-              AND COLUMN_NAME = %s
-            """,
-            ("bot_ai_runtime_config", "enable_image_group"),
-        )
-        if not row or int(row.get("total") or 0) == 0:
-            try:
-                database.execute(
-                    """
-                    ALTER TABLE bot_ai_runtime_config
-                    ADD COLUMN enable_image_group TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否在群聊启用生图'
-                    AFTER enable_tools
-                    """,
-                    (),
-                )
-                logger.info("已补齐 AI 运行时配置字段: enable_image_group")
-            except Exception as exc:
-                if "duplicate column" not in str(exc).lower():
-                    raise
+        columns_to_ensure = [
+            ("image_model", "VARCHAR(128) NULL COMMENT '主生图模型' AFTER vision_model"),
+            ("enable_image_group", "TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否在群聊启用生图' AFTER enable_tools"),
+            ("enable_thinking", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用深度思考' AFTER enable_image_group"),
+            ("max_tokens", "INT UNSIGNED NULL DEFAULT 1024 COMMENT '单次最大生成Token数' AFTER enable_thinking"),
+            ("temperature", "DECIMAL(3,2) NULL DEFAULT NULL COMMENT '采样温度 0.00-2.00' AFTER max_tokens"),
+            ("top_p", "DECIMAL(3,2) NULL DEFAULT NULL COMMENT '核采样阈值 0.00-1.00' AFTER temperature"),
+            ("presence_penalty", "DECIMAL(3,2) NULL DEFAULT NULL COMMENT '存在惩罚 -2.00-2.00' AFTER top_p"),
+            ("frequency_penalty", "DECIMAL(3,2) NULL DEFAULT NULL COMMENT '频率惩罚 -2.00-2.00' AFTER presence_penalty"),
+        ]
+        for col_name, col_def in columns_to_ensure:
+            row = database.fetch_one(
+                """
+                SELECT COUNT(*) AS total
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = %s
+                  AND COLUMN_NAME = %s
+                """,
+                ("bot_ai_runtime_config", col_name),
+            )
+            if not row or int(row.get("total") or 0) == 0:
+                try:
+                    database.execute(
+                        f"ALTER TABLE bot_ai_runtime_config ADD COLUMN {col_name} {col_def}",
+                        (),
+                    )
+                    logger.info("已补齐 AI 运行时配置字段: %s", col_name)
+                except Exception as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        raise
         self._runtime_columns_checked = True
 
     def update_runtime_settings(self, payload: dict[str, Any]) -> None:
@@ -405,8 +408,12 @@ class RuntimeConfigStore:
 
     @staticmethod
     def _normalize_runtime_value(column: str, value: Any) -> Any:
-        if column in {"enable_tools", "enable_image_group", "enable_summary_memory", "summary_only_group"}:
+        if column in {"enable_tools", "enable_image_group", "enable_summary_memory", "summary_only_group", "enable_thinking"}:
             return 1 if bool(value) else 0
+        if column == "max_tokens":
+            return int(value) if value is not None and value != "" else None
+        if column in {"temperature", "top_p", "presence_penalty", "frequency_penalty"}:
+            return float(value) if value is not None and value != "" else None
         if column in {"text_model_fallback_json", "vision_model_fallback_json"} and not isinstance(value, str):
             return dumps_json(value)
         return value

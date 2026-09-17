@@ -230,7 +230,79 @@
                 </div>
                 <el-switch v-model="form.enable_image_group" />
               </div>
+              <div class="switch-row" :class="{ active: form.enable_thinking }">
+                <div>
+                  <div class="switch-label">深度思考 (Reasoning)</div>
+                  <div class="switch-help">启用后支持模型深度推理链，并自动过滤思维链标签</div>
+                </div>
+                <el-switch v-model="form.enable_thinking" />
+              </div>
             </div>
+          </div>
+        </el-card>
+
+        <el-card class="page-card runtime-panel">
+          <template #header>
+            <div class="panel-title">模型生成与推理参数</div>
+          </template>
+          <div class="runtime-metrics">
+            <el-form-item label="单次最大Token (max_tokens)">
+              <el-input-number
+                v-model="form.max_tokens"
+                :min="64"
+                :max="32768"
+                :step="128"
+                placeholder="默认 1024"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="采样温度 (temperature)">
+              <el-input-number
+                v-model="form.temperature"
+                :min="0"
+                :max="2"
+                :step="0.05"
+                :precision="2"
+                placeholder="留空即默认"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="核采样阈值 (top_p)">
+              <el-input-number
+                v-model="form.top_p"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :precision="2"
+                placeholder="留空即默认"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="话题存在惩罚 (presence_penalty)">
+              <el-input-number
+                v-model="form.presence_penalty"
+                :min="-2"
+                :max="2"
+                :step="0.1"
+                :precision="2"
+                placeholder="留空即默认"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="频率重复惩罚 (frequency_penalty)" style="grid-column: 1 / -1">
+              <el-input-number
+                v-model="form.frequency_penalty"
+                :min="-2"
+                :max="2"
+                :step="0.1"
+                :precision="2"
+                placeholder="留空即默认"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </div>
+          <div class="panel-footnote">
+            提示：温度与惩罚参数留空（清空输入框）时，不向模型接口传参，完全遵循模型服务商官方预设。
           </div>
         </el-card>
 
@@ -306,6 +378,12 @@ const form = reactive({
   enable_summary_memory: true,
   summary_only_group: true,
   enable_image_group: true,
+  enable_thinking: false,
+  max_tokens: 1024,
+  temperature: null as number | null,
+  top_p: null as number | null,
+  presence_penalty: null as number | null,
+  frequency_penalty: null as number | null,
   summary_trigger_rounds: 150,
   summary_keep_recent_messages: 16,
   summary_cooldown_seconds: 90,
@@ -347,6 +425,12 @@ const loadData = async () => {
     form.enable_summary_memory = Boolean(data.enable_summary_memory)
     form.summary_only_group = Boolean(data.summary_only_group)
     form.enable_image_group = Boolean(data.enable_image_group)
+    form.enable_thinking = Boolean(data.enable_thinking)
+    form.max_tokens = data.max_tokens !== null && data.max_tokens !== undefined ? Number(data.max_tokens) : 1024
+    form.temperature = data.temperature !== null && data.temperature !== undefined ? Number(data.temperature) : null
+    form.top_p = data.top_p !== null && data.top_p !== undefined ? Number(data.top_p) : null
+    form.presence_penalty = data.presence_penalty !== null && data.presence_penalty !== undefined ? Number(data.presence_penalty) : null
+    form.frequency_penalty = data.frequency_penalty !== null && data.frequency_penalty !== undefined ? Number(data.frequency_penalty) : null
     form.summary_trigger_rounds = Number(data.summary_trigger_rounds ?? 150)
     form.summary_keep_recent_messages = Number(data.summary_keep_recent_messages ?? 16)
     form.summary_cooldown_seconds = Number(data.summary_cooldown_seconds ?? 90)
@@ -373,6 +457,11 @@ const save = async () => {
   try {
     await adminApi.updateRuntimeConfig({
       ...form,
+      max_tokens: form.max_tokens ? Number(form.max_tokens) : 1024,
+      temperature: form.temperature !== null && form.temperature !== undefined && (form.temperature as any) !== '' ? Number(form.temperature) : null,
+      top_p: form.top_p !== null && form.top_p !== undefined && (form.top_p as any) !== '' ? Number(form.top_p) : null,
+      presence_penalty: form.presence_penalty !== null && form.presence_penalty !== undefined && (form.presence_penalty as any) !== '' ? Number(form.presence_penalty) : null,
+      frequency_penalty: form.frequency_penalty !== null && form.frequency_penalty !== undefined && (form.frequency_penalty as any) !== '' ? Number(form.frequency_penalty) : null,
       minecraft_notify_groups: parseLines(minecraftNotifyGroupsRaw.value)
         .map((item) => Number(item))
         .filter((item) => Number.isFinite(item) && item > 0),

@@ -54,6 +54,12 @@ class RuntimeConfigPayload(BaseModel):
     default_reply_rate: int | None = Field(default=None, ge=0, le=100)
     enable_tools: bool | None = None
     enable_image_group: bool | None = None
+    enable_thinking: bool | None = None
+    max_tokens: int | None = Field(default=None, ge=64, le=32768)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
+    frequency_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
     enable_summary_memory: bool | None = None
     summary_only_group: bool | None = None
     summary_trigger_rounds: int | None = Field(default=None, ge=1, le=2000)
@@ -274,10 +280,11 @@ class SummaryUpdatePayload(BaseModel):
     is_active: bool | None = None
 
 
-def _model_dump(model: BaseModel) -> dict[str, Any]:
+def _model_dump(model: BaseModel, *, exclude_none: bool = True) -> dict[str, Any]:
+    dump_kwargs: dict[str, Any] = {"exclude_none": True} if exclude_none else {"exclude_unset": True}
     if hasattr(model, "model_dump"):
-        return dict(model.model_dump(exclude_none=True))
-    return dict(model.dict(exclude_none=True))
+        return dict(model.model_dump(**dump_kwargs))
+    return dict(model.dict(**dump_kwargs))
 
 
 def _get_current_admin(request: Request, x_admin_token: str | None) -> dict[str, Any]:
@@ -408,7 +415,7 @@ async def update_runtime_config(
 ) -> dict[str, Any]:
     admin = _get_current_admin(request, x_admin_token)
     return get_container().admin_service.update_runtime_config(
-        _model_dump(payload),
+        _model_dump(payload, exclude_none=False),
         changed_by=_changed_by(admin),
     )
 

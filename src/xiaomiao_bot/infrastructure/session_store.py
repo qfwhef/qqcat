@@ -296,7 +296,12 @@ class SessionStore:
         scope = self.get_scope(event)
         summary_table, summary_key = self._summary_table(scope)
         state = self.get_summary_state(event)
-        version = state.summary_version + 1
+        version_row = database.fetch_one(
+            f"SELECT MAX(summary_version) AS max_version FROM {summary_table} WHERE {summary_key}=%s",
+            (scope.session_id,),
+        )
+        max_version = int((version_row or {}).get("max_version") or 0)
+        version = max(int(state.summary_version or 0), max_version) + 1
         database.execute(
             f"UPDATE {summary_table} SET is_active=0 WHERE {summary_key}=%s",
             (scope.session_id,),

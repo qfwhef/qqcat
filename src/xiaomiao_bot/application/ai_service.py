@@ -207,7 +207,8 @@ class AIService:
 
         if any(hint in context_msg for hint in memory_write_hints + memory_read_hints):
             allow_mcp_server("memory")
-        if any(hint in context_msg for hint in thinking_hints):
+        enable_thinking = bool(self.runtime_config_store.get_runtime_snapshot().get("enable_thinking", False))
+        if enable_thinking and any(hint in context_msg for hint in thinking_hints):
             allow_mcp_server("thinking")
         if any(hint in text for hint in fetch_hints):
             allow_mcp_server("fetch")
@@ -937,14 +938,34 @@ class AIService:
         max_retries: int = 3,
     ) -> Any:
         retry_count = 0
+        runtime_snapshot = self.runtime_config_store.get_runtime_snapshot()
+        configured_max_tokens = runtime_snapshot.get("max_tokens")
+        max_tokens = int(configured_max_tokens) if configured_max_tokens else self.max_completion_tokens
+        temperature = runtime_snapshot.get("temperature")
+        top_p = runtime_snapshot.get("top_p")
+        presence_penalty = runtime_snapshot.get("presence_penalty")
+        frequency_penalty = runtime_snapshot.get("frequency_penalty")
+        enable_thinking = bool(runtime_snapshot.get("enable_thinking", False))
+
         while retry_count <= max_retries:
             try:
                 client = self._get_openai_client()
                 kwargs: dict[str, Any] = {
                     "model": model,
                     "messages": messages,
-                    "max_tokens": self.max_completion_tokens,
+                    "max_tokens": max_tokens,
                 }
+                if temperature is not None:
+                    kwargs["temperature"] = float(temperature)
+                if top_p is not None:
+                    kwargs["top_p"] = float(top_p)
+                if presence_penalty is not None:
+                    kwargs["presence_penalty"] = float(presence_penalty)
+                if frequency_penalty is not None:
+                    kwargs["frequency_penalty"] = float(frequency_penalty)
+                if enable_thinking:
+                    kwargs["extra_body"] = {"include_reasoning": True}
+
                 if allow_tools and self.enable_tools:
                     openai_tools = self.tools.get_openai_tools(allowed_tool_names=allowed_tool_names)
                     if openai_tools:
@@ -957,6 +978,7 @@ class AIService:
                     if "unexpected keyword argument" in err_text and ("tools" in err_text or "tool_choice" in err_text):
                         raise ToolArgsNotSupportedError(str(exc)) from exc
                     if "unexpected keyword argument" in err_text:
+                        kwargs.pop("extra_body", None)
                         kwargs.pop("include_reasoning", None)
                         return await client.chat.completions.create(**kwargs)
                     raise
@@ -967,6 +989,13 @@ class AIService:
                     if retry_count > max_retries:
                         raise
                     await asyncio.sleep(1.2**retry_count)
+                    continue
+                if "extra_body" in kwargs and any(
+                    token in err_text
+                    for token in ("reasoning", "thinking", "extra_body", "unrecognized request argument")
+                ):
+                    logger.warning("模型接口拒绝深度思考/推理参数，剥离后重试: %s", exc)
+                    kwargs.pop("extra_body", None)
                     continue
                 if allow_tools and self.enable_tools and any(
                     token in err_text
@@ -1262,6 +1291,8 @@ class AIService:
 
     @staticmethod
     def _clean_model_output(text: str) -> str:
+        text = re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
+        text = re.sub(r"^[\s\S]*?</think>", "", text).strip()
         llama_marker = "<|start_header_id|>assistant<|end_header_id|>"
         if llama_marker in text:
             text = text.split(llama_marker)[-1].strip()
